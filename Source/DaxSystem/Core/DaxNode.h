@@ -1,6 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
+#include "AngelscriptManager.h"
 #include "udm.h"
 #include "DaxStdAllocatorGlue.h"
 #include "DaxCommon.h"
@@ -16,32 +17,16 @@ namespace ArzDax {
         static constexpr int32 InlineAlign = 16;
 
         TAlignedBytes<InlineSize, InlineAlign> Data{};
-        TWeakObjectPtr<const UScriptStruct> ScriptStruct = nullptr;
+        //TWeakObjectPtr<const UScriptStruct> ScriptStruct = nullptr;
+        const UScriptStruct* ScriptStruct = nullptr;
 
         FDaxSmallValue() = delete;
 
-        FDaxSmallValue(FDaxSmallValue&& Other) {
-            const UScriptStruct* S = Other.ScriptStruct.Get();
-            checkf(S, TEXT("FDaxSmallValue move: ScriptStruct invalid"));
-            ScriptStruct = Other.ScriptStruct;
-            S->CopyScriptStruct(Data.Pad, Other.Data.Pad);
-            Other.Reset();
-        }
-
-        FDaxSmallValue& operator=(FDaxSmallValue&& Other) {
-            if (this != &Other) {
-                Reset();
-                const UScriptStruct* S = Other.ScriptStruct.Get();
-                checkf(S, TEXT("FDaxSmallValue move: ScriptStruct invalid"));
-                ScriptStruct = Other.ScriptStruct;
-                S->CopyScriptStruct(Data.Pad, Other.Data.Pad);
-                Other.Reset();
-            }
-            return *this;
-        }
+        FDaxSmallValue(FDaxSmallValue&& Other) = delete;
+        FDaxSmallValue& operator=(FDaxSmallValue&& Other) = delete;
 
         FDaxSmallValue(const FDaxSmallValue& Other) : ScriptStruct(Other.ScriptStruct) {
-            const UScriptStruct* S = ScriptStruct.Get();
+            const UScriptStruct* S = ScriptStruct;
             checkf(S, TEXT("FDaxSmallValue copy: ScriptStruct invalid"));
             S->CopyScriptStruct(Data.Pad, Other.Data.Pad);
         }
@@ -49,7 +34,7 @@ namespace ArzDax {
         FDaxSmallValue& operator=(const FDaxSmallValue& Other) {
             if (this != &Other) {
                 Reset();
-                const UScriptStruct* S = Other.ScriptStruct.Get();
+                const UScriptStruct* S = Other.ScriptStruct;
                 checkf(S, TEXT("FDaxSmallValue copy=: ScriptStruct invalid"));
                 ScriptStruct = Other.ScriptStruct;
                 S->CopyScriptStruct(Data.Pad, Other.Data.Pad);
@@ -58,7 +43,7 @@ namespace ArzDax {
         }
 
         explicit FDaxSmallValue(const UScriptStruct* InScriptStruct) : ScriptStruct(InScriptStruct) {
-            const UScriptStruct* S = ScriptStruct.Get();
+            const UScriptStruct* S = ScriptStruct;
             checkf(S, TEXT("FDaxSmallValue(UScriptStruct*): ScriptStruct invalid"));
             checkf(CanInline(S), TEXT("FDaxSmallValue: size %d align %d exceed inline limit (size %d, align %d)"),
                    S->GetStructureSize(), S->GetMinAlignment(),
@@ -70,7 +55,7 @@ namespace ArzDax {
         explicit FDaxSmallValue(const FConstStructView InStruct) {
             checkf(InStruct.IsValid(), TEXT("FDaxSmallValue(FConstStructView): InStruct invalid"));
             ScriptStruct = InStruct.GetScriptStruct();
-            const UScriptStruct* S = ScriptStruct.Get();
+            const UScriptStruct* S = ScriptStruct;
 
             checkf(S, TEXT("FDaxSmallValue(FConstStructView): ScriptStruct invalid"));
             checkf(CanInline(S), TEXT("FDaxSmallValue: size %d align %d exceed inline limit (size %d, align %d)"),
@@ -85,11 +70,20 @@ namespace ArzDax {
             Reset();
         }
 
-        const UScriptStruct* GetScriptStruct() const noexcept { return ScriptStruct.Get(); }
+        const UScriptStruct* GetScriptStruct() const noexcept { return ScriptStruct; }
 
         EDaxResult TrySet(const FConstStructView InStruct, EPropertyPortFlags Flags = PPF_None) {
-            const UScriptStruct* S = ScriptStruct.Get();
-            checkf(S, TEXT("FDaxSmallValue::TrySet(self): invalid"));
+            const UScriptStruct* S = ScriptStruct;
+
+            if (!S) {
+                UE_LOG(DataXSystem, Error, TEXT("==== Stack Trace:"));
+                const auto Stack = FAngelscriptManager::Get().GetAngelscriptCallstack();
+                for (const auto& Frame : Stack) {
+                    UE_LOGFMT(DataXSystem, Error, "==== {0}", Frame);
+                }
+                checkf(false, TEXT("FDaxSmallValue::TrySet(self): invalid"));
+            }
+
             if (!InStruct.IsValid())
                 return EDaxResult::InvalidTargetValue;
 
@@ -104,9 +98,24 @@ namespace ArzDax {
         }
 
         EDaxResult TrySet(const FDaxSmallValue& InStruct, EPropertyPortFlags Flags = PPF_None) {
-            const UScriptStruct* S = ScriptStruct.Get();
-            checkf(S, TEXT("FDaxSmallValue::TrySet(self): invalid"));
-            checkf(InStruct.ScriptStruct.Get(), TEXT("FDaxSmallValue::TrySet(param): invalid"));
+            const UScriptStruct* S = ScriptStruct;
+            if (!S) {
+                UE_LOG(DataXSystem, Error, TEXT("==== Stack Trace:"));
+                const auto Stack = FAngelscriptManager::Get().GetAngelscriptCallstack();
+                for (const auto& Frame : Stack) {
+                    UE_LOGFMT(DataXSystem, Error, "==== {0}", Frame);
+                }
+                checkf(false, TEXT("FDaxSmallValue::TrySet(self): invalid"));
+            }
+
+            if (!InStruct.ScriptStruct) {
+                UE_LOG(DataXSystem, Error, TEXT("==== Stack Trace:"));
+                const auto Stack = FAngelscriptManager::Get().GetAngelscriptCallstack();
+                for (const auto& Frame : Stack) {
+                    UE_LOGFMT(DataXSystem, Error, "==== {0}", Frame);
+                }
+                checkf(InStruct.ScriptStruct, TEXT("FDaxSmallValue::TrySet(param): invalid"));
+            }
 
             if (InStruct.ScriptStruct != ScriptStruct)
                 return EDaxResult::ValueTypeMismatch;
@@ -119,54 +128,76 @@ namespace ArzDax {
         }
 
         FConstStructView TryGet(const UScriptStruct* ValueType) const {
-            const UScriptStruct* S = ScriptStruct.Get();
-            checkf(S, TEXT("FDaxSmallValue::TryGet: self Value is invalid"));
+            const UScriptStruct* S = ScriptStruct;
+
+            if (!S) {
+                UE_LOG(DataXSystem, Error, TEXT("==== Stack Trace:"));
+                const auto Stack = FAngelscriptManager::Get().GetAngelscriptCallstack();
+                for (const auto& Frame : Stack) {
+                    UE_LOGFMT(DataXSystem, Error, "==== {0}", Frame);
+                }
+                checkf(S, TEXT("FDaxSmallValue::TryGet: self Value is invalid"));
+            }
             if (ValueType != S) return {};
             return FConstStructView(S, Data.Pad);
         }
 
         FConstStructView TryGetGeneric() const {
-            const UScriptStruct* S = ScriptStruct.Get();
-            checkf(S, TEXT("FDaxSmallValue::TryGetGeneric: self Value is invalid"));
+            const UScriptStruct* S = ScriptStruct;
+            if (!S) {
+                UE_LOG(DataXSystem, Error, TEXT("==== Stack Trace:"));
+                const auto Stack = FAngelscriptManager::Get().GetAngelscriptCallstack();
+                for (const auto& Frame : Stack) {
+                    UE_LOGFMT(DataXSystem, Error, "==== {0}", Frame);
+                }
+                checkf(S, TEXT("FDaxSmallValue::TryGetGeneric: self Value is invalid"));
+            }
             return FConstStructView(S, Data.Pad);
         }
 
         FStructView TryGetGenericMutable() {
-            const UScriptStruct* S = ScriptStruct.Get();
-            checkf(S, TEXT("FDaxSmallValue::TryGetGenericMutable: self Value is invalid"));
+            const UScriptStruct* S = ScriptStruct;
+            if (!S) {
+                UE_LOG(DataXSystem, Error, TEXT("==== Stack Trace:"));
+                const auto Stack = FAngelscriptManager::Get().GetAngelscriptCallstack();
+                for (const auto& Frame : Stack) {
+                    UE_LOGFMT(DataXSystem, Error, "==== {0}", Frame);
+                }
+                checkf(S, TEXT("FDaxSmallValue::TryGetGenericMutable: self Value is invalid"));
+            }
             return FStructView(S, Data.Pad);
         }
 
         bool Identical(const FDaxSmallValue* Other, uint32 PortFlags) const {
             if (this == Other) return true;
             if (!Other) return false;
-            const UScriptStruct* S = ScriptStruct.Get();
-            const UScriptStruct* OS = Other->ScriptStruct.Get();
+            const UScriptStruct* S = ScriptStruct;
+            const UScriptStruct* OS = Other->ScriptStruct;
             checkf(S && OS, TEXT("FDaxSmallValue::Identical: invalid"));
             if (S != OS) return false;
             return S->CompareScriptStruct(Data.Pad, Other->Data.Pad, (EPropertyPortFlags)PortFlags);
         }
 
         bool IdenticalTo(const FConstStructView Other, EPropertyPortFlags Flags = PPF_None) const {
-            const UScriptStruct* S = ScriptStruct.Get();
+            const UScriptStruct* S = ScriptStruct;
             if (!Other.IsValid() || Other.GetScriptStruct() != S) return false;
             return S->CompareScriptStruct(Data.Pad, Other.GetMemory(), Flags);
         }
 
         static bool CanInline(const UScriptStruct* S) {
-            checkf(IsValid(S), TEXT("FDaxSmallValue::CanInline: ScriptStruct invalid"));
+            checkf(S != nullptr, TEXT("FDaxSmallValue::CanInline: ScriptStruct invalid"));
             const int32 Size = S->GetStructureSize();
             const int32 Align = S->GetMinAlignment();
             return Size <= InlineSize && Align <= InlineAlign;
         }
 
-        bool CanInline() const { return ScriptStruct.IsValid() && CanInline(ScriptStruct.Get()); }
+        bool CanInline() const { return ScriptStruct != nullptr && CanInline(ScriptStruct); }
 
     private:
         void Reset() {
-            if (const UScriptStruct* S = ScriptStruct.Get()) {
+            if (const UScriptStruct* S = ScriptStruct) {
                 S->DestroyStruct(Data.Pad);
-                ScriptStruct.Reset();
+                ScriptStruct = nullptr;
             }
         }
     };
@@ -177,18 +208,8 @@ namespace ArzDax {
         FInstancedStruct Value;
 
         FDaxHeapValue() = delete;
-
-        FDaxHeapValue(FDaxHeapValue&& Other) : Value(MoveTemp(Other.Value)) {
-            checkf(Value.IsValid(), TEXT("FDaxHeapValue move=: Value invalid"));
-        }
-
-        FDaxHeapValue& operator=(FDaxHeapValue&& Other) {
-            if (this != &Other) {
-                Value = MoveTemp(Other.Value);
-                checkf(Value.IsValid(), TEXT("FDaxHeapValue move=: Value invalid"));
-            }
-            return *this;
-        }
+        FDaxHeapValue(FDaxHeapValue&& Other) = delete;
+        FDaxHeapValue& operator=(FDaxHeapValue&& Other) = delete;
 
         ~FDaxHeapValue() { Value.Reset(); }
 
@@ -357,19 +378,8 @@ namespace ArzDax {
 
         FDaxNode() { Value.Emplace<FDaxEmpty>(); }
         ~FDaxNode() = default;
-
-        FDaxNode(FDaxNode&& Other) : Value(MoveTemp(Other.Value)) {
-            Other.ResetToEmpty();
-        }
-
-        FDaxNode& operator=(FDaxNode&& Other) {
-            if (this != &Other) {
-                Value = MoveTemp(Other.Value);
-                Other.ResetToEmpty();
-            }
-            return *this;
-        }
-
+        FDaxNode(FDaxNode&& Other) = delete;
+        FDaxNode& operator=(FDaxNode&& Other) = delete;
         FDaxNode(const FDaxNode& Other) : Value(Other.Value) {};
 
         FDaxNode& operator=(const FDaxNode& Other) {
@@ -394,7 +404,8 @@ namespace ArzDax {
                 if (IsEmptyArray() || IsEmptyMap()) {
                     Value.Emplace<FDaxEmpty>();
                     return EDaxResult::SuccessOverrideEmpty;
-                } else {
+                }
+                else {
                     Value.Emplace<FDaxEmpty>();
                     return EDaxResult::SuccessChangeValueAndType;
                 }
@@ -408,7 +419,8 @@ namespace ArzDax {
                 if (array.Num() > 0) {
                     array.Empty();
                     return EDaxResult::SuccessChangeValue;
-                } else {
+                }
+                else {
                     return EDaxResult::SameValueNotChange;
                 }
             }
@@ -416,7 +428,8 @@ namespace ArzDax {
             if (IsEmpty()) {
                 Value.Emplace<FDaxArray>();
                 return EDaxResult::SuccessOverrideEmpty;
-            } else {
+            }
+            else {
                 Value.Emplace<FDaxArray>();
                 return EDaxResult::SuccessChangeValueAndType;
             }
@@ -428,7 +441,8 @@ namespace ArzDax {
                 if (Map.size() > 0) {
                     Map.clear();
                     return EDaxResult::SuccessChangeValue;
-                } else {
+                }
+                else {
                     return EDaxResult::SameValueNotChange;
                 }
             }
@@ -436,7 +450,8 @@ namespace ArzDax {
             if (IsEmpty()) {
                 Value.Emplace<FDaxMap>();
                 return EDaxResult::SuccessOverrideEmpty;
-            } else {
+            }
+            else {
                 Value.Emplace<FDaxMap>();
                 return EDaxResult::SuccessChangeValueAndType;
             }
@@ -467,7 +482,7 @@ namespace ArzDax {
             return nullptr;
         }
 
-        FORCEINLINE const FDaxMapType* GetMap() const{
+        FORCEINLINE const FDaxMapType* GetMap() const {
             if (const auto* Ptr = GetMapWrapper()) return &Ptr->Children();
             return nullptr;
         }
@@ -480,11 +495,13 @@ namespace ArzDax {
                     (S->GetMinAlignment() <= FDaxSmallValue::InlineAlign);
                 if (canInline) {
                     Value.Emplace<FDaxSmallValue>(Target);
-                } else {
+                }
+                else {
                     Value.Emplace<FDaxHeapValue>(Target);
                 }
                 return EDaxResult::SuccessChangeValueAndType;
-            } else {
+            }
+            else {
                 if (auto* H = Value.TryGet<FDaxHeapValue>()) return H->TrySet(Target);
                 if (auto* S = Value.TryGet<FDaxSmallValue>()) return S->TrySet(Target);
                 return EDaxResult::ValueTypeMismatch;
@@ -519,11 +536,13 @@ namespace ArzDax {
                 if (Type->GetCppStructOps()->HasNetSerializer()) {
                     bool Success = true;
                     Type->GetCppStructOps()->NetSerialize(Ar, Map, Success, Temp.GetMutableMemory());
-                } else {
+                }
+                else {
                     Type->SerializeBin(Ar, Temp.GetMutableMemory());
                 }
                 TrySetValue(Temp);
-            } else if (Ar.IsSaving()) {
+            }
+            else if (Ar.IsSaving()) {
                 if (!IsValue()) return false;
                 auto SV = TryGetValueGenericMutable();
                 auto SS = SV.GetScriptStruct();
@@ -531,7 +550,8 @@ namespace ArzDax {
                 if (SS->GetCppStructOps()->HasNetSerializer()) {
                     bool Success = true;
                     SS->GetCppStructOps()->NetSerialize(Ar, Map, Success, SV.GetMemory());
-                } else {
+                }
+                else {
                     SS->SerializeBin(Ar, SV.GetMemory());
                 }
             }

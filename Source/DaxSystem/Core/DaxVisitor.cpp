@@ -965,16 +965,15 @@ FDaxResultDetail FDaxVisitor::ResolvePathInternal(EDaxPathResolveMode Mode) cons
         return Node ? Node->GetTypeName().ToString() : FString(TEXT("<null>"));
     };
 
-    // 快速路径：结构版本一致且缓存ID仍有效
+    // 快速路径：结构版本一致，尝试直接验证缓存节点仍有效
     if (CachedSetStructVersion == TargetSet->StructVersion) {
-        if (IsOnServer) {
-            if (CachedNodeID.IsValid() && CachedNode) return FDaxResultDetail(EDaxResult::Success);
-            // 服务端不需要读取OverlayMap, 只要CachedNodeID是有效的, 只要父容器结构没变, 那么代表没有节点被删除, 那么这个ID就是有效的
+        // 统一用 TryGetNode 校验节点仍存在（避免使用已释放的旧指针导致误判）
+        ArzDax::FDaxNode* NodePtr = TargetSet->TryGetNode(CachedNodeID);
+        if (NodePtr != nullptr) {
+            CachedNode = NodePtr; // 同步更新缓存指针（服务端不走 Overlay 也安全）
+            return FDaxResultDetail(EDaxResult::Success);
         }
-        else {
-            CachedNode = TargetSet->TryGetNode(CachedNodeID); // 客户端：读取 Overlay 视图
-            if (CachedNode) return FDaxResultDetail(EDaxResult::Success);
-        }
+        // 若节点已无效，则继续走完整解析流程
     }
     else {
         // 结构版本变化后，检测缓存的节点是否仍然有效
@@ -982,7 +981,6 @@ FDaxResultDetail FDaxVisitor::ResolvePathInternal(EDaxPathResolveMode Mode) cons
         OldNodeID = CachedNodeID;
         CachedSetStructVersion = TargetSet->StructVersion;
     }
-
     if (!IsOnServer) Mode = EDaxPathResolveMode::ReadOnly; //如果是客户端, 不允许修改结构, 对于预测, 只能进行值修改, 而不能修改结构
 
     // 重解析：从 Root 开始
