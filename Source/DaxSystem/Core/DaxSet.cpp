@@ -11,11 +11,6 @@ FDaxSet::FDaxSet() {
     BumpNodeDataVersionAndStruct(RootID);
 }
 
-FDaxSet::~FDaxSet() {
-    if (GlobalSetID != 0)
-        FDaxGlobalSetManager::UnregisterOnClient(this);
-}
-
 FDaxSet::FDaxSet(const FDaxSet& Other) {
     LiveToken = MakeShared<uint8>(0);
     CopySet(Other);
@@ -28,8 +23,7 @@ FDaxSet& FDaxSet::operator=(const FDaxSet& Other) {
 
 FString FDaxSet::GetString() const {
     FString Out;
-    Out += FString::Printf(TEXT("DaxSet(ID=%u) DataVer=%u StructVer=%u Nodes=%u\n"),
-                           GlobalSetID, DataVersion, StructVersion, Allocator.GetCurrentActive());
+    Out += FString::Printf(TEXT("DaxSetDataVer=%u StructVer=%u Nodes=%u\n"), DataVersion, StructVersion, Allocator.GetCurrentActive());
 
     auto IndentOf = [](int32 Depth) {
         FString S;
@@ -122,8 +116,7 @@ FString FDaxSet::GetStringDebug() const {
     // 头部：全局ID、版本与分配器统计
     Out += FString::Printf(
         TEXT(
-            "DaxSet(ID=%u) DataVer=%u StructVer=%u \n Allocator { TotalAlloc=%u, TotalFree=%u, Current=%u, Peak=%u, Chunks=%u, FreeRemain=%u }\n"),
-        GlobalSetID,
+            "DaxSet DataVer=%u StructVer=%u \n Allocator { TotalAlloc=%u, TotalFree=%u, Current=%u, Peak=%u, Chunks=%u, FreeRemain=%u }\n"),
         DataVersion,
         StructVersion,
         Allocator.GetTotalAllocated(),
@@ -221,10 +214,6 @@ FString FDaxSet::GetStringDebug() const {
     }
 
     return Out;
-}
-
-bool FDaxSet::IsNetRegistered() const {
-    return FDaxGlobalSetManager::TryGetDaxSetInfo(GlobalSetID).IsValid();
 }
 
 bool FDaxSet::IsRemainingSpaceSupportCopy(const FDaxSet& Source, const FDaxNodeID SourceID) const {
@@ -690,20 +679,6 @@ void FDaxSet::Clear() {
     RootID = {};
 }
 
-void FDaxSet::RegisterDaxSetOnNetWork(FArchive& Ar) {
-    if (Ar.IsSaving()) {
-        uint32 ID = ArzDax::FDaxGlobalSetManager::Register(this);
-        Ar.SerializeIntPacked(ID);
-    }
-    else if (Ar.IsLoading()) {
-        // 客户端
-        uint32 ID;
-        Ar.SerializeIntPacked(ID);
-        if (ID == 0) return;
-        ArzDax::FDaxGlobalSetManager::RegisterOnClient(ID, this);
-    }
-}
-
 bool FDaxSet::NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParms) {
     if (DeltaParms.bUpdateUnmappedObjects) return true;
     SCOPE_CYCLE_COUNTER(STAT_NetSyncTick);
@@ -735,11 +710,11 @@ bool FDaxSet::NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParms) {
                 }
             });
 
-            return Sync_ServerFullSyncImpl(DeltaParms);
+            return Sync_ServerFullWrite(DeltaParms);
         }
         else {
             if (OldState->ContainerVersion == DataVersion) return false;
-            return Sync_ServerDeltaSyncImpl(DeltaParms, OldState);
+            return Sync_ServerDeltaWrite(DeltaParms, OldState);
         }
     }
 
@@ -748,8 +723,8 @@ bool FDaxSet::NetDeltaSerialize(FNetDeltaSerializeInfo& DeltaParms) {
         OldValueMap.clear();
         FBitReader& Reader = *DeltaParms.Reader;
         const bool IsFullSync = Reader.ReadBit() != 0;
-        if (IsFullSync) return Sync_ClientFullSyncImpl(DeltaParms);
-        return Sync_ClientDeltaSyncImpl(DeltaParms);
+        if (IsFullSync) return Sync_ClientFullRead(DeltaParms);
+        return Sync_ClientDeltaRead(DeltaParms);
     }
 
     return false;
@@ -761,20 +736,18 @@ bool FDaxSet::BindOnChanged(const FDaxVisitor& Position, int32 Depth, const FDax
     //if (bRunningOnServer) return false; // 仅客户端
     if (!Position.IsValid()) return false;
     if (!Delegate.IsBound()) return false;
-    FDaxOnChangedBinding B;
-    B.Position = Position;
+    FDaxOnChangedBinding B {};
+    B.ListenPath = Position;
     B.Depth = FMath::Max(0, Depth);
     B.Delegate = Delegate;
     OnChangedBindings.Add(B);
-    OnChangedIndexStructVersion = 0; // 触发下次派发前重建索引
     return true;
 }
 
 void FDaxSet::UnbindOnChanged(const FDaxVisitor& Position) {
     OnChangedBindings.RemoveAll([&](const FDaxOnChangedBinding& B) {
-        return B.Position == Position;
+        return B.ListenPath == Position;
     });
-    OnChangedIndexStructVersion = 0;
 }
 
 void FDaxSet::UnbindAllFor(UObject* TargetObject) {
@@ -782,7 +755,6 @@ void FDaxSet::UnbindAllFor(UObject* TargetObject) {
     OnChangedBindings.RemoveAll([&](const FDaxOnChangedBinding& B) {
         return B.Delegate.IsBound() && B.Delegate.GetUObject() == TargetObject;
     });
-    OnChangedIndexStructVersion = 0;
 }
 
 FConstStructView FDaxSet::TryGetOldValueByNodeID(const FDaxNodeID NodeID) const {
@@ -792,32 +764,14 @@ FConstStructView FDaxSet::TryGetOldValueByNodeID(const FDaxNodeID NodeID) const 
     return {};
 }
 
-void FDaxSet::RebuildOnChangedIndex() {
-    OnChangedIndex.clear();
-    for (int32 i = 0; i < OnChangedBindings.Num(); ++i) {
-        FDaxOnChangedBinding& B = OnChangedBindings[i];
-        if (!B.IsValid()) continue;
-        FDaxVisitor Anchor = B.Position;
-        if (!Anchor.EnsureResolvedReadOnly()) continue;
-        const FDaxNodeID AnchorID = Anchor.GetCachedNodeID();
-        if (!AnchorID.IsValid()) continue;
-        B.AnchorID = AnchorID;
-        B.AnchorStructVersion = StructVersion;
-        TArray<int32>& List = OnChangedIndex[AnchorID];
-        List.Add(i);
-    }
-}
-
-// ================== Sync*Impl（拆分实现） ==================
-
-bool FDaxSet::Sync_ServerFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
+bool FDaxSet::Sync_ServerFullWrite(FNetDeltaSerializeInfo& DeltaParms) {
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerFullWrite"));
+    
     FBitWriter& Writer = *DeltaParms.Writer;
-    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerFullSyncImpl"));
     TSharedPtr<FDaxSetBaseState> NewState = MakeShared<FDaxSetBaseState>();
     *DeltaParms.NewState = NewState;
 
-    Writer.WriteBit(true); // 全量同步标记
-    RegisterDaxSetOnNetWork(Writer);
+    Writer.WriteBit(true);
 
     NewState->ContainerVersion = DataVersion;
 
@@ -840,7 +794,7 @@ bool FDaxSet::Sync_ServerFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
         DeltaParms.Map->SerializeObject(Writer, UScriptStruct::StaticClass(), TempTypeObject);
 
         if (Type == nullptr || Type == FDaxFakeTypeEmpty::StaticStruct()) {
-            // 空
+            
         }
         else if (Type == FDaxFakeTypeArray::StaticStruct()) {
             auto* Arr = Node.GetArray();
@@ -871,22 +825,14 @@ bool FDaxSet::Sync_ServerFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             Node.SerializeValueData(Writer, DeltaParms.Map, Type);
         }
     });
-    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerFullSyncImpl End"));
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerFullWrite End"));
     return true;
 }
 
-bool FDaxSet::Sync_ServerDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms, FDaxSetBaseState* OldState) {
+bool FDaxSet::Sync_ServerDeltaWrite(FNetDeltaSerializeInfo& DeltaParms, FDaxSetBaseState* OldState) {
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerDeltaWrite"));
     FBitWriter& Writer = *DeltaParms.Writer;
-    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerDeltaSyncImpl"));
-
-    Writer.WriteBit(false); // 增量标记
-    if (OldState->GlobalSetID <= 1) {
-        Writer.WriteBit(true);
-        RegisterDaxSetOnNetWork(Writer);
-    }
-    else {
-        Writer.WriteBit(false);
-    }
+    Writer.WriteBit(false); // Delta Sync
 
     const int32 CurrChunkCount = static_cast<int32>(Allocator.GetChunkCount());
     const int32 OldChunkCount = OldState ? OldState->ChildStates.Num() : 0;
@@ -915,6 +861,7 @@ bool FDaxSet::Sync_ServerDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms, FDaxS
         Ar.SerializeIntPacked(Count);
         for (uint32 i = 0; i < Count; ++i) Ar << (*Arr)[i];
     };
+    
     auto WriteFullMap = [&](FArchive& Ar, const FDaxNodeID ID) {
         auto* Node = Allocator.TryGetNode(ID);
         auto* Map = Node ? Node->GetMap() : nullptr;
@@ -926,6 +873,7 @@ bool FDaxSet::Sync_ServerDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms, FDaxS
                 Ar << Kv.second;
             }
     };
+    
     auto WriteMapDelta = [&](FArchive& Ar, const FDaxNodeID ID, const FDaxSetBaseState* Old) {
         TArray<FName> RemovesKeys;
         TArray<std::pair<FName, FDaxNodeID>> AddPairs;
@@ -968,6 +916,7 @@ bool FDaxSet::Sync_ServerDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms, FDaxS
         }
         return Rm + Ad + Rb;
     };
+    
     auto WriteArrayDelta = [&](FArchive& Ar, const FDaxNodeID ID, const FDaxSetBaseState* Old) {
         const auto& OldArrRefOpt = Old->ArrayMirror.find(ID);
         const TArray<FDaxNodeID>* OldArr = (OldArrRefOpt != Old->ArrayMirror.end()) ? &OldArrRefOpt->second : nullptr;
@@ -1096,7 +1045,7 @@ bool FDaxSet::Sync_ServerDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms, FDaxS
                 }
             }
         }
-        const bool bSendCFull = IsContainer; // Add 容器统一发全量
+        const bool bSendCFull = IsContainer;
         uint8 Flags = ArzDax::DaxMakeDeltaFlags(EDaxDeltaOp::Add, true, true, bSendValue, false, bSendCFull);
         Writer << const_cast<FDaxNodeID&>(R.ID);
         Writer << Flags;
@@ -1235,20 +1184,17 @@ bool FDaxSet::Sync_ServerDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms, FDaxS
     for (const auto& R : Updates) RefreshContainerMirror(R.ID, R.Type);
 
     *DeltaParms.NewState = NewState;
-    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerDeltaSyncImpl End"));
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerDeltaWrite End"));
     return true;
 }
 
-bool FDaxSet::Sync_ClientFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
-    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ClientFullSyncImpl"));
+bool FDaxSet::Sync_ClientFullRead(FNetDeltaSerializeInfo& DeltaParms) {
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ClientFullRead"));
     FBitReader& Reader = *DeltaParms.Reader;
 
-    // 入口已读取 IsFullSync=true
     Allocator.Reset();
-    ClearOverlayMap();
+    OverlayMap.clear();
     RootID = {};
-
-    RegisterDaxSetOnNetWork(Reader);
 
     uint32 NodeCount = 0;
     Reader.SerializeIntPacked(NodeCount);
@@ -1337,117 +1283,22 @@ bool FDaxSet::Sync_ClientFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
     if (RootCandidate.IsValid()) RootID = RootCandidate;
     ++StructVersion;
     ++DataVersion;
-    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ClientFullSyncImpl End"));
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ClientFullRead End"));
     DAX_NET_SYNC_LOG(Warning, "Full ReaderBits pos={0}/{1}", Reader.GetPosBits(), Reader.GetNumBits());
     return true;
 }
 
-bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
+bool FDaxSet::Sync_ClientDeltaRead(FNetDeltaSerializeInfo& DeltaParms) {
     SCOPE_CYCLE_COUNTER(STAT_NetDeltaSync);
-    DAX_NET_SYNC_LOG(Warning, "DaxSet::Sync_ClientDeltaSyncImpl");
+    DAX_NET_SYNC_LOG(Warning, "DaxSet::Sync_ClientDeltaRead");
     FBitReader& Reader = *DeltaParms.Reader;
-    if (const bool IsNeedRegister = Reader.ReadBit() != 0) {
-        RegisterDaxSetOnNetWork(Reader);
-    }
-    ClearOverlayMap();
+    OverlayMap.clear();
 
     bool bLocalStructChanged = false;
     bool bLocalDataChanged = false;
 
-    struct FChangedEvent {
-        FDaxNodeID ID;
-        TArray<TVariant<FName, int32>> Path;
-    };
-    TArray<FChangedEvent> ChangedEvents;
-
-    auto BuildPathFromNodeID = [&](const FDaxNodeID Leaf, TArray<TVariant<FName, int32>>& OutPath) {
-        OutPath.Reset();
-        if (!Allocator.IsNodeValid(Leaf)) return false;
-        struct FSeg {
-            TVariant<FName, int32> V;
-        };
-        TArray<FSeg, TInlineAllocator<32>> Rev;
-        FDaxNodeID Curr = Leaf;
-        while (Curr.IsValid()) {
-            const FDaxNodeID P = GetNodeParent(Curr);
-            if (!P.IsValid()) break;
-            ArzDax::FDaxNode* PNode = Allocator.TryGetNode(P);
-            if (!PNode) {
-                Rev.Empty();
-                break;
-            }
-            if (PNode->IsArray()) {
-                auto* Arr = PNode->GetArray();
-                int32 Found = -1;
-                if (Arr) {
-                    // 快路径：反向映射
-                    if (Allocator.GetParentEdgeKind(Curr) == ArzDax::EDaxParentEdgeKind::Array) {
-                        const uint16 EdgeIdx = Allocator.GetParentEdgeIndex(Curr);
-                        if (Arr->IsValidIndex((int32)EdgeIdx) && (*Arr)[EdgeIdx] == Curr) {
-                            Found = (int32)EdgeIdx;
-                        }
-                    }
-                    // 回退：线性扫描，并修正反向映射
-                    if (Found < 0) {
-                        for (int32 i = 0; i < Arr->Num(); ++i) {
-                            if ((*Arr)[i] == Curr) {
-                                Found = i;
-                                break;
-                            }
-                        }
-                        if (Found >= 0) Allocator.UpdateParentEdgeArray(Curr, (uint16)Found);
-                    }
-                }
-                if (Found < 0) {
-                    Rev.Empty();
-                    break;
-                }
-                Rev.Add(FSeg{TVariant<FName, int32>(TInPlaceType<int32>(), Found)});
-            }
-            else if (PNode->IsMap()) {
-                auto* Map = PNode->GetMap();
-                FName FoundKey = NAME_None;
-                if (Map) {
-                    // 快路径：反向映射
-                    if (Allocator.GetParentEdgeKind(Curr) == ArzDax::EDaxParentEdgeKind::Map) {
-                        const FName Label = Allocator.GetParentEdgeLabel(Curr);
-                        auto It = Map->find(Label);
-                        if (It != Map->end() && It->second == Curr) {
-                            FoundKey = Label;
-                        }
-                    }
-                    // 回退：线性扫描并修正
-                    if (FoundKey.IsNone()) {
-                        for (const auto& KV : *Map) {
-                            if (KV.second == Curr) {
-                                FoundKey = KV.first;
-                                break;
-                            }
-                        }
-                        if (!FoundKey.IsNone()) Allocator.UpdateParentEdgeMap(Curr, FoundKey);
-                    }
-                }
-                if (FoundKey.IsNone()) {
-                    Rev.Empty();
-                    break;
-                }
-                Rev.Add(FSeg{TVariant<FName, int32>(TInPlaceType<FName>(), FoundKey)});
-            }
-            else {
-                Rev.Empty();
-                break;
-            }
-            Curr = P;
-        }
-        if (Rev.IsEmpty() && Leaf != RootID) return false;
-        OutPath.Reserve(Rev.Num());
-        for (int32 i = Rev.Num() - 1; i >= 0; --i) OutPath.Add(Rev[i].V);
-        return true;
-    };
-
     auto CaptureOldIfValue = [&](const FDaxNodeID ID) {
         if (OldValueMap.contains(ID)) return;
-        if (!Allocator.IsNodeValid(ID)) return;
         ArzDax::FDaxNode* Node = Allocator.TryGetNode(ID);
         if (!Node) return;
         const UScriptStruct* Type = Allocator.GetValueType(ID);
@@ -1471,9 +1322,6 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
         Reader << NodeID;
         if (Allocator.IsNodeValid(NodeID)) {
             CaptureOldIfValue(NodeID);
-            FChangedEvent Ev{NodeID, {}};
-            BuildPathFromNodeID(NodeID, Ev.Path);
-            ChangedEvents.Add(MoveTemp(Ev));
             ReleaseRecursive(NodeID);
         }
     }
@@ -1498,8 +1346,8 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             TempType = Cast<UScriptStruct>(TempTypeObject);
         }
         Allocator.AllocateSlotAt(NodeID);
-        if (auto InfoRef = Allocator.GetCommonInfoRef(NodeID); InfoRef.IsValid()) {
-            if (InfoRef.pParent && ArzDax::DaxFlagHasParent(Flags)) *InfoRef.pParent = Parent;
+        if (auto ParentRef = Allocator.GetParentRef(NodeID); ParentRef) {
+            if (ArzDax::DaxFlagHasParent(Flags)) *ParentRef = Parent;
             if (TempType) Allocator.UpdateValueType(NodeID, TempType);
         }
 
@@ -1520,14 +1368,13 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
                 }
             }
         };
+
         const FString TypeName = TempType ? TempType->GetName() : TEXT("null");
         DAX_NET_SYNC_LOG(Warning, "Delta-Add[{0}] Node={1} Flags={2} Type={3}", i, NodeID.ToString(), FString::Printf(TEXT("0x%X"), Flags), TypeName);
 
         if (!TempType || TempType == FDaxFakeTypeEmpty::StaticStruct()) {
-            if (Node) {
-                Node->ResetToEmpty();
-                Allocator.UpdateValueType(NodeID, FDaxFakeTypeEmpty::StaticStruct());
-            }
+            Node->ResetToEmpty();
+            Allocator.UpdateValueType(NodeID, FDaxFakeTypeEmpty::StaticStruct());
             bLocalDataChanged = true;
         }
         else if (TempType == FDaxFakeTypeArray::StaticStruct()) {
@@ -1535,10 +1382,8 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             if (ArzDax::DaxFlagIsCFull(Flags)) {
                 uint32 Count = 0;
                 Reader.SerializeIntPacked(Count);
-                auto* Arr = Node ? Node->GetArray() : nullptr;
-                if (Arr) {
-                    Arr->Empty();
-                    Arr->Reserve(Count);
+                if (auto* Arr = Node ? Node->GetArray() : nullptr) {
+                    Arr->Empty(Count);
                     for (uint32 k = 0; k < Count; ++k) {
                         FDaxNodeID C;
                         Reader << C;
@@ -1714,7 +1559,6 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             }
         }
 
-        ChangedEvents.Add(FChangedEvent{NodeID, {}});
         const int32 EndBits = Reader.GetPosBits();
         DAX_NET_SYNC_LOG(Warning, "Delta-Add[{0}] bits {1}->{2} (+{3})", i, StartBits, EndBits, EndBits - StartBits);
     }
@@ -1938,7 +1782,6 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
         else {
             // 仅 Meta 更新
         }
-        ChangedEvents.Add(FChangedEvent{NodeID, {}});
     }
 
     if (bLocalStructChanged) {
@@ -1946,57 +1789,8 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
         ++DataVersion;
     }
     else if (bLocalDataChanged) { ++DataVersion; }
-
-    if (!OnChangedBindings.IsEmpty() && !ChangedEvents.IsEmpty()) {
-        TSet<FDaxNodeID> Seen;
-        TArray<FChangedEvent> FinalEvents;
-        FinalEvents.Reserve(ChangedEvents.Num());
-        for (FChangedEvent& E : ChangedEvents) {
-            const FDaxNodeID Key = E.ID;
-            if (Seen.Contains(Key)) continue;
-            Seen.Add(Key);
-            FinalEvents.Add(MoveTemp(E));
-        }
-        if (OnChangedIndexStructVersion != StructVersion) {
-            RebuildOnChangedIndex();
-            OnChangedIndexStructVersion = StructVersion;
-        }
-        
-        PathCache.clear();
-        auto DispatchToBinding = [&](int32 BindingIndex, int32 DepthDiff, const FChangedEvent& E) {
-            if (!OnChangedBindings.IsValidIndex(BindingIndex)) return;
-            const FDaxOnChangedBinding& B = OnChangedBindings[BindingIndex];
-            if (!B.IsValid() || DepthDiff < 0 || DepthDiff > B.Depth) return;
-            const TArray<TVariant<FName, int32>>* PathPtr = &E.Path;
-            if (PathPtr->Num() == 0) {
-                if (auto Existing = PathCache.findPtr(E.ID)) { PathPtr = Existing; }
-                else {
-                    TArray<TVariant<FName, int32>> NewPath;
-                    if (BuildPathFromNodeID(E.ID, NewPath)) {
-                        PathCache.emplace(E.ID, NewPath);
-                        PathPtr = PathCache.findPtr(E.ID);
-                    }
-                    else { return; }
-                }
-            }
-            FDaxVisitor ChangePos(this, LiveToken, *PathPtr);
-            B.Delegate.ExecuteIfBound(ChangePos);
-        };
-        for (const FChangedEvent& E : FinalEvents) {
-            int32 Dist = 0;
-            FDaxNodeID Cur = E.ID;
-            while (Cur.IsValid()) {
-                if (const TArray<int32>* List = OnChangedIndex.findPtr(Cur)) {
-                    for (int32 BindingIndex : *List) {
-                        DispatchToBinding(BindingIndex, Dist, E);
-                    }
-                }
-                Cur = GetNodeParent(Cur);
-                ++Dist;
-            }
-        }
-    }
-    DAX_NET_SYNC_LOG(Warning, "DaxSet::Sync_ClientDeltaSyncImpl End");
+    
+    DAX_NET_SYNC_LOG(Warning, "DaxSet::Sync_ClientDeltaRead End");
     DAX_NET_SYNC_LOG(Warning, "Delta ReaderBits pos={0}/{1}", Reader.GetPosBits(), Reader.GetNumBits());
     return true;
 }

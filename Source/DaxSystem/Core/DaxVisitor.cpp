@@ -2,6 +2,8 @@
 #include "DaxSystem/Node/DaxNode.h"
 #include "DaxSystem/Core/DaxSet.h"
 #include "DaxSystem/Core/DaxVisitor.inl"
+
+#include "DaxComponent.h"
 #include "DaxSystem/Basic/DaxBuiltinTypes.h"
 #include "String/ParseTokens.h"
 
@@ -63,10 +65,6 @@ int32 FDaxVisitor::GetDepthRelativeTo(const FDaxVisitor& Ancestor) const {
     // 祖先判定由 IsAncestor 保证严格祖先
     if (!Ancestor.IsAncestor(*this)) return -1;
     return NodePath.Num() - Ancestor.NodePath.Num();
-}
-
-bool FDaxVisitor::EnsureResolvedReadOnly() const {
-    return ResolvePathInternal(EDaxPathResolveMode::ReadOnly).IsOk();
 }
 
 FDaxVisitor FDaxVisitor::MakeVisitorToParent() const {
@@ -929,6 +927,25 @@ FName FDaxVisitor::GetKeyUnderAncestorMap(const FDaxVisitor& Ancestor) const {
     return Key;
 }
 
+bool FDaxVisitor::operator==(const FDaxVisitor& Other) const {
+    if (NodePath.Num() != Other.NodePath.Num()) return false;
+    if (TargetLiveToken.Pin().Get() != Other.TargetLiveToken.Pin().Get()) return false;
+
+    for (int32 i = 0; i < NodePath.Num(); ++i) {
+        const auto& A = NodePath[i];
+        const auto& B = Other.NodePath[i];
+        if (A.GetIndex() != B.GetIndex()) return false;
+        if (A.GetIndex() == 0) {
+            if (A.Get<FName>() != B.Get<FName>()) return false;
+        }
+        else {
+            if (A.Get<int32>() != B.Get<int32>()) return false;
+        }
+    }
+
+    return true;
+}
+
 FDaxResultDetail FDaxVisitor::ResolvePathInternal(EDaxPathResolveMode Mode) const {
     if (!IsValid()) return FDaxResultDetail(EDaxResult::InvalidVisitor, TEXT("Visitor invalid or Set destroyed"));
     const bool IsOnServer = TargetSet->bRunningOnServer;
@@ -1268,21 +1285,22 @@ bool FDaxVisitor::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess
     uint8 bHasData = 0;
 
     if (Ar.IsSaving()) {
-        bool bValid = IsValid();
-        if (bValid) {
-            bValid = ArzDax::FDaxGlobalSetManager::TryGetDaxSetInfo(TargetSet->GlobalSetID).IsValid();
-        }
+        bool bValid = IsValid() && TargetSet->ParentComponent.IsValid();
 
         bHasData = bValid ? 1 : 0;
         Ar << bHasData;
 
-        // 当无有效数据时，保证读写对称：不再写入任何字段
         if (!bValid) {
             bOutSuccess = true;
             return true;
         }
 
-        Ar.SerializeIntPacked(TargetSet->GlobalSetID);
+        UObject* Ptr = TargetSet->ParentComponent.Get();
+        if (!Map->SerializeObject(Ar, UDaxComponent::StaticClass(), Ptr)) {
+            UE_LOGFMT(DataXSystem, Warning, "FDaxVisitor::NetSerialize(send): SerializeObject failed");
+            bOutSuccess = false;
+            return true;
+        }
 
         uint32 Count = static_cast<uint32>(NodePath.Num());
         Ar.SerializeIntPacked(Count);
@@ -1299,10 +1317,7 @@ bool FDaxVisitor::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess
                 Ar << I;
             }
         }
-        //SUCCESS SHOW DETAIL
-
-        UE_LOGFMT(DataXSystem, Log, "FDaxVisitor::NetSerialize(send): SetID={0}, PathCount={1}", TargetSet->GlobalSetID,
-                  Count);
+        
         bOutSuccess = true;
         return true;
     }
@@ -1311,19 +1326,27 @@ bool FDaxVisitor::NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess
 
         Ar << bHasData;
 
-        UE_LOGFMT(DataXSystem, Log, "FDaxVisitor::NetSerialize(receive): bHasData={0}", bHasData);
         if (!bHasData) {
             bOutSuccess = true;
             return true;
         }
 
-        uint32 GlobalSetID = 0;
-        Ar.SerializeIntPacked(GlobalSetID);
-
-        const auto DaxSetInfo = ArzDax::FDaxGlobalSetManager::TryGetDaxSetInfo(GlobalSetID);
-
-        TargetSet = DaxSetInfo.Ptr;
-        TargetLiveToken = DaxSetInfo.LiveToken;
+        UObject* Ptr = nullptr;
+        if (!Map->SerializeObject(Ar, UDaxComponent::StaticClass(), Ptr)) {
+            UE_LOGFMT(DataXSystem, Warning, "FDaxVisitor::NetSerialize(recv): SerializeObject failed");
+            bOutSuccess = false;
+            return true;
+        }
+        
+        UDaxComponent* Comp = Cast<UDaxComponent>(Ptr);
+        if (!Comp) {
+            UE_LOGFMT(DataXSystem, Warning, "FDaxVisitor::NetSerialize(recv): Invalid component pointer");
+            bOutSuccess = false;
+            return true;
+        }
+        
+        TargetSet = &Comp->DataSet;
+        TargetLiveToken = Comp->DataSet.LiveToken.ToWeakPtr();
 
         uint32 Count = 0;
         Ar.SerializeIntPacked(Count);
@@ -1407,7 +1430,7 @@ FString FDaxVisitor::GetString() const {
     };
 
     FString Out;
-    Out += FString::Printf(TEXT("Visitor(SetID=%u) Path=%s\n"), TargetSet ? TargetSet->GlobalSetID : 0u, *BuildPath());
+    Out += FString::Printf(TEXT("Visitor Path=%s\n"), *BuildPath());
 
     const FString Ind0 = IndentOf(0);
     const FString RootLabel = TEXT("Self");
@@ -1542,7 +1565,7 @@ FString FDaxVisitor::GetStringDebug() const {
     };
 
     FString Out;
-    Out += FString::Printf(TEXT("Visitor(SetID=%u) Path=%s\n"), TargetSet ? TargetSet->GlobalSetID : 0u, *BuildPath());
+    Out += FString::Printf(TEXT("Visitor Path=%s\n"), *BuildPath());
 
     const FString Ind0 = IndentOf(0);
     const FString RootLabel = TEXT("Self");
@@ -1725,7 +1748,7 @@ FString FDaxVisitor::GetStringDeep() const {
     };
 
     FString Out;
-    Out += FString::Printf(TEXT("Visitor(SetID=%u) Path=%s\n"), TargetSet ? TargetSet->GlobalSetID : 0u, *BuildPath());
+    Out += FString::Printf(TEXT("Visitor Path=%s\n"), *BuildPath());
 
     const FDaxNodeID RootID = CachedNodeID;
 
@@ -1819,7 +1842,7 @@ FString FDaxVisitor::GetStringDebugDeep() const {
     };
 
     FString Out;
-    Out += FString::Printf(TEXT("Visitor(SetID=%u) Path=%s\n"), TargetSet ? TargetSet->GlobalSetID : 0u, *BuildPath());
+    Out += FString::Printf(TEXT("Visitor Path=%s\n"), *BuildPath());
 
     const FDaxNodeID RootID = CachedNodeID;
 

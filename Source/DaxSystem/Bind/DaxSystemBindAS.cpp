@@ -56,8 +56,7 @@ AS_FORCE_LINK const FAngelscriptBinds::FBind Bind_FDaxSet(
         FDaxSet_.Method("int32 GetNodeNum() const", &FDaxSet::GetNodeNum);
         FDaxSet_.Method("FString GetString() const", &FDaxSet::GetString);
         FDaxSet_.Method("FString GetStringDebug() const", &FDaxSet::GetStringDebug);
-        FDaxSet_.Method("bool IsNetRegistered() const", &FDaxSet::IsNetRegistered);
-        FDaxSet_.Method("bool BindOnChanged(const FDaxVisitor& Position, int32 Depth, UObject Target, const FName& FuncName)",
+        FDaxSet_.Method("bool BindOnChanged(const FDaxVisitor& ListenPath, int32 Depth, UObject Target, const FName& FuncName)",
             [](FDaxSet& Set, const FDaxVisitor& Position, const int32 Depth, UObject* Target, const FName& FuncName) {
                 FDaxOnChangedDynamic Delegate;
                 Delegate.BindUFunction(Target, FuncName);
@@ -65,7 +64,7 @@ AS_FORCE_LINK const FAngelscriptBinds::FBind Bind_FDaxSet(
                 return Set.BindOnChanged(Position, Depth, Delegate);
             });
 
-        FDaxSet_.Method("void UnbindOnChanged(const FDaxVisitor& Position)",
+        FDaxSet_.Method("void UnbindOnChanged(const FDaxVisitor& ListenPath)",
             [](FDaxSet& Set, const FDaxVisitor& Position) {
                 return Set.UnbindOnChanged(Position);
             });

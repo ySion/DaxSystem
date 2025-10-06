@@ -11,9 +11,9 @@ class DAXSYSTEM_API UDaxComponent : public UActorComponent {
 
 public:
     UDaxComponent();
-
+    
     UPROPERTY(Replicated)
-    FDaxSet DataSet;
+    FDaxSet DataSet {};
 
     virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
     

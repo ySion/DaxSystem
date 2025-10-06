@@ -84,8 +84,8 @@ public:
     bool IsANoEmptyMap() const;
     bool IsANoEmptyArray() const;
 
-    
 
+    
     // 路径/缓存辅助（用于监听深度匹配与OldValue关联）
     // 返回：当前访问器路径段数量
     int32 GetPathSegmentCount() const { return NodePath.Num(); }
@@ -95,9 +95,6 @@ public:
     FDaxNodeID GetCachedNodeID() const { return CachedNodeID; }
     // 返回：当结构版本变化导致重新解析前记录的旧节点ID
     FDaxNodeID GetOldNodeID() const { return OldNodeID; }
-    
-    // 触发一次只读解析，成功则可获取 CachedNodeID
-    bool EnsureResolvedReadOnly() const;
 
 
     
@@ -199,34 +196,17 @@ public:
     int32 GetIndexUnderAncestorArray(const FDaxVisitor& Ancestor) const;
     FName GetKeyUnderAncestorMap(const FDaxVisitor& Ancestor) const;
 
-    bool operator==(const FDaxVisitor& Other) const {
-        if (NodePath.Num() != Other.NodePath.Num()) return false;
-        if (TargetLiveToken.Pin().Get() != Other.TargetLiveToken.Pin().Get()) return false;
 
-        for (int32 i = 0; i < NodePath.Num(); ++i) {
-            const auto& A = NodePath[i];
-            const auto& B = Other.NodePath[i];
-            if (A.GetIndex() != B.GetIndex()) return false;
-            if (A.GetIndex() == 0) {
-                if (A.Get<FName>() != B.Get<FName>()) return false;
-            }
-            else {
-                if (A.Get<int32>() != B.Get<int32>()) return false;
-            }
-        }
-
-        return true;
-    }
-
-
-    bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
-
-
+    // 信息打印系列
     FString GetString() const;
     FString GetStringDebug() const;
     FString GetStringDeep() const;
     FString GetStringDebugDeep() const;
     FString GetPathString() const;
+
+    bool operator==(const FDaxVisitor& Other) const;
+    
+    bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
 
 private:
     FDaxResultDetail ResolvePathInternal(EDaxPathResolveMode Mode) const;

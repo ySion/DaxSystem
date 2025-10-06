@@ -1,10 +1,18 @@
 ﻿#include "DaxComponent.h"
 
+#include "DaxSubsystem.h"
 #include "Net/UnrealNetwork.h"
 #include "Net/Core/PushModel/PushModel.h"
 
 UDaxComponent::UDaxComponent() {
     PrimaryComponentTick.bCanEverTick = false;
+    const auto W = GetWorld();
+    if (!W) return;
+    
+    auto Sys = W->GetSubsystem<UDaxSubsystem>();
+    if (!Sys) return;
+    
+    Sys->RegisterComponent(this);
     SetIsReplicatedByDefault(true);
     DataSet.ParentComponent = this;
 }
