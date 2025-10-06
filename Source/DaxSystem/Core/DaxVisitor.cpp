@@ -1,9 +1,9 @@
 ﻿#include "DaxVisitor.h"
-#include "DaxNode.h"
-#include "DaxSet.h"
-#include "DaxBuiltinTypes.h"
+#include "DaxSystem/Node/DaxNode.h"
+#include "DaxSystem/Core/DaxSet.h"
+#include "DaxSystem/Core/DaxVisitor.inl"
+#include "DaxSystem/Basic/DaxBuiltinTypes.h"
 #include "String/ParseTokens.h"
-#include "DaxVisitor.inl"
 
 bool FDaxVisitor::HasData() const {
     return ResolvePathInternal(EDaxPathResolveMode::ReadOnly).IsOk();

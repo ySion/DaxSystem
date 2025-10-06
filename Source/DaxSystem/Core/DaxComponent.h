@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "DaxSet.h"
+#include "DaxSystem/Core/DaxSet.h"
 #include "Components/ActorComponent.h"
 #include "DaxComponent.generated.h"
 

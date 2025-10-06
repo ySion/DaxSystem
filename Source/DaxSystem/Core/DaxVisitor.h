@@ -1,12 +1,10 @@
 ﻿#pragma once
 
 #include "CoreMinimal.h"
-#include "DaxCommon.h"
-#include "DaxNodeID.h"
+#include "DaxSystem/Basic/DaxCommon.h"
+#include "DaxSystem/Basic/DaxNodeID.h"
+#include "DaxSystem/Basic/DaxBuiltinTypes.h"
 #include "StructUtils/StructView.h"
-
-// 内置值类型轻量包装（仅被访问器便捷接口使用）
-#include "DaxBuiltinTypes.h"
 
 #include "DaxVisitor.generated.h"
 
@@ -224,18 +222,17 @@ public:
         return true;
     }
 
-    // 网络序列化
+
     bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
 
 
-    // 文本输出（仅在 Resolve 成功时有效）
-    FString GetString() const; // 当前节点及直接子节点（简要）
+    FString GetString() const;
 
-    FString GetStringDebug() const; // 当前节点及直接子节点（含ID/Version）
+    FString GetStringDebug() const;
 
-    FString GetStringDeep() const; // 递归打印（不含ID/Version），适合普通调试
+    FString GetStringDeep() const;
 
-    FString GetStringDebugDeep() const; // 递归打印（含ID/Version），适合定位同步/版本问题
+    FString GetStringDebugDeep() const;
 
     FString GetPathString() const;
 
@@ -264,7 +261,6 @@ private:
 
     mutable ArzDax::FDaxNode* CachedNode{};
 
-    // 结构变化前一次解析所对应的节点ID（用于客户端监听的OldValue定位）
     mutable FDaxNodeID OldNodeID{};
 };
 

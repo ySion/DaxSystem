@@ -1,5 +1,5 @@
 ﻿#include "DaxSystemBindAS.h"
-#include "DaxSet.h"
+#include "DaxSystem/Core/DaxSet.h"
 
 #define DAX_WITH_ANGELSCRIPT
 #ifdef  DAX_WITH_ANGELSCRIPT

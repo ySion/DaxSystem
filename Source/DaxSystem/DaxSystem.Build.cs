@@ -14,7 +14,8 @@ public class DaxSystem : ModuleRules {
         PrivateIncludePaths.AddRange(
             new string[] { }
         );
-
+        
+        PrivateIncludePaths.Add(PluginDirectory);
 
         PublicDependencyModuleNames.AddRange(
             new string[] {

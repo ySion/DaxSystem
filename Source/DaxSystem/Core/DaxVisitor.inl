@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include "DaxSet.h"
-#include "DaxNode.h"
+#include "DaxSystem/Node/DaxNode.h"
 
 template <typename T>
 FDaxVisitor FDaxVisitor::SearchChildBy(T PredictFunc) const {

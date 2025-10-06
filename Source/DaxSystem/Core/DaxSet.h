@@ -1,10 +1,8 @@
 ﻿#pragma once
+
 #include "CoreMinimal.h"
-#include "DaxAllocator.h"
-#include "DaxVisitor.h"
-#include "StructUtils/InstancedStruct.h"
-#include "UObject/Class.h"
-#include "UObject/ScriptDelegates.h"
+#include "DaxSystem/Allocator/DaxAllocator.h"
+#include "DaxSystem/Core/DaxVisitor.h"
 #include "DaxSet.generated.h"
 
 class UDaxComponent;
@@ -43,20 +41,19 @@ struct DAXSYSTEM_API FDaxSet {
     GENERATED_BODY()
 
     FDaxSet();
-    FDaxSet(FDaxSet&& Other);
-    FDaxSet& operator=(FDaxSet&& Other);
-    FDaxSet& operator=(const FDaxSet& Other);
-
-    FDaxSet(const FDaxSet& Other) {
-        LiveToken = MakeShared<uint8>(0);
-        CopySet(Other);
-    }
-
     ~FDaxSet();
-
-    FDaxVisitor GetVisitor() const { return FDaxVisitor(const_cast<FDaxSet*>(this), LiveToken); }
+    FDaxSet(const FDaxSet& Other);
+    FDaxSet& operator=(const FDaxSet& Other);
+    FDaxSet(FDaxSet&& Other) = delete;
+    FDaxSet& operator=(FDaxSet&& Other) = delete;
     
+    FDaxVisitor GetVisitor() const { return FDaxVisitor(const_cast<FDaxSet*>(this), LiveToken); }
     FDaxVisitor GetVisitorFromPath(const FString& Path) const { return GetVisitor().MakeVisitorByParsePath(Path); }
+
+    FString GetString() const;
+    FString GetStringDebug() const;
+    
+    FORCEINLINE uint32 GetNodeNum() const { return Allocator.Stats.CurrentActive; }
 
 private:
     void CopySet(const FDaxSet& Other);
@@ -73,7 +70,7 @@ private:
 
     FDaxResultDetail ResetToEmptyMap(const FDaxNodeID ID);
 
-    ArzDax::FDaxNode* TryGetNode(const FDaxNodeID ID) {
+    FORCEINLINE ArzDax::FDaxNode* TryGetNode(const FDaxNodeID ID) {
         if (!bRunningOnServer)
             if (auto It = OverlayMap.find(ID); It != OverlayMap.end()) return It->second.Get();
         return Allocator.TryGetNode(ID);
@@ -102,16 +99,15 @@ public:
     FORCEINLINE FDaxNodeID GetNodeParent(const FDaxNodeID Child) const { return Allocator.GetParent(Child); }
 
     FORCEINLINE const UScriptStruct* GetNodeValueType(FDaxNodeID ID) const { return Allocator.GetValueType(ID); }
-
-    FORCEINLINE uint32 GetNodeNum() const { return Allocator.Stats.CurrentActive; }
-
+    
     FORCEINLINE uint32 GetNodeNumRecursive(const FDaxNodeID ID) const;
 
-    FString GetString() const;
-
-    FString GetStringDebug() const;
-
 private:
+    
+    friend struct FDaxVisitor;
+    friend struct ArzDax::FDaxGlobalSetManager;
+    friend class UDaxComponent;
+    
     FORCEINLINE void BumpOnlyNodeDataVersion(const FDaxNodeID ID) {
         if (!bRunningOnServer) return;
         Allocator.MarkDirty(ID, true);;
@@ -139,10 +135,7 @@ private:
     void BumpStructVersion();
 
 private:
-    friend struct FDaxVisitor;
-    friend struct ArzDax::FDaxGlobalSetManager;
-    friend class UDaxComponent;
-
+    
     FORCEINLINE FDaxNodeID NewNode() { return Allocator.Allocate(); }
 
     bool RedirectNode(const FDaxNodeID Old, const FDaxNodeID New);
@@ -195,7 +188,7 @@ private:
 
     bool bRunningOnServer = true;
 
-    TWeakObjectPtr<UDaxComponent> ParentComponent{}; //if exist;
+    TWeakObjectPtr<UDaxComponent> ParentComponent{};
 
     TArray<FDaxOnChangedBinding> OnChangedBindings{};
 
@@ -259,12 +252,12 @@ struct TStructOpsTypeTraits<FDaxSet> : public TStructOpsTypeTraitsBase2<FDaxSet>
 };
 
 class FDaxSetBaseState : public INetDeltaBaseState {
-public:
     using FDaxArrayMirrorType = ankerl::unordered_dense::map<FDaxNodeID, TArray<FDaxNodeID>,
                                                              ArzDax::FDaxNodeIDHash, ArzDax::FDaxNodeIDEqual, ArzDax::TDaxAllocator<std::pair<FDaxNodeID, TArray<FDaxNodeID>>>>;
 
     using FDaxMapMirrorType = ankerl::unordered_dense::map<FDaxNodeID, ArzDax::FDaxMapType,
                                                            ArzDax::FDaxNodeIDHash, ArzDax::FDaxNodeIDEqual, ArzDax::TDaxAllocator<std::pair<FDaxNodeID, ArzDax::FDaxMapType>>>;
+public:
 
     uint32 ContainerVersion{};
 
@@ -284,10 +277,7 @@ public:
         return false;
     }
 
-    virtual void CountBytes(FArchive& Ar) const override {
-        //Ar.CountBytes(sizeof(FArzNBTContainerBaseState), sizeof(FArzNBTContainerBaseState));
-        //VersionChunks.CountBytes(Ar);
-    }
+    virtual void CountBytes(FArchive& Ar) const override {}
 };
 
 namespace ArzDax {

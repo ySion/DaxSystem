@@ -1,7 +1,7 @@
 ﻿#include "DaxSet.h"
 
 #include "DaxComponent.h"
-#include "DaxNode.h"
+#include "DaxSystem/Node/DaxNode.h"
 
 using namespace ArzDax;
 
@@ -11,31 +11,14 @@ FDaxSet::FDaxSet() {
     BumpNodeDataVersionAndStruct(RootID);
 }
 
-FDaxSet::FDaxSet(FDaxSet&& Other) {
-    LiveToken = MakeShared<uint8>(0);
-    Other.LiveToken.Reset();
-
-    Allocator = MoveTemp(Other.Allocator);
-    RootID = MoveTemp(Other.RootID);
-    DataVersion = Other.DataVersion;
-    StructVersion = Other.StructVersion;
-    bRunningOnServer = Other.bRunningOnServer;
-    OverlayMap = MoveTemp(Other.OverlayMap);
-    BumpNodeDataVersionAndStruct(RootID);
+FDaxSet::~FDaxSet() {
+    if (GlobalSetID != 0)
+        FDaxGlobalSetManager::UnregisterOnClient(this);
 }
 
-FDaxSet& FDaxSet::operator=(FDaxSet&& Other) {
-    if (this == &Other) return *this;
-    Other.LiveToken.Reset();
-
-    Allocator = MoveTemp(Other.Allocator);
-    RootID = MoveTemp(Other.RootID);
-    DataVersion = Other.DataVersion;
-    StructVersion = Other.StructVersion;
-    bRunningOnServer = Other.bRunningOnServer;
-    OverlayMap = MoveTemp(Other.OverlayMap);
-    BumpNodeDataVersionAndStruct(RootID);
-    return *this;
+FDaxSet::FDaxSet(const FDaxSet& Other) {
+    LiveToken = MakeShared<uint8>(0);
+    CopySet(Other);
 }
 
 FDaxSet& FDaxSet::operator=(const FDaxSet& Other) {
@@ -43,9 +26,201 @@ FDaxSet& FDaxSet::operator=(const FDaxSet& Other) {
     return *this;
 }
 
-FDaxSet::~FDaxSet() {
-    if (GlobalSetID != 0)
-        FDaxGlobalSetManager::UnregisterOnClient(this);
+FString FDaxSet::GetString() const {
+    FString Out;
+    Out += FString::Printf(TEXT("DaxSet(ID=%u) DataVer=%u StructVer=%u Nodes=%u\n"),
+                           GlobalSetID, DataVersion, StructVersion, Allocator.GetCurrentActive());
+
+    auto IndentOf = [](int32 Depth) {
+        FString S;
+        S.Reserve(Depth * 2);
+        for (int32 i = 0; i < Depth; ++i) S += TEXT("   ");
+        return S;
+    };
+
+    auto ValueToText = [](const FConstStructView& SV) -> FString {
+        if (!SV.IsValid()) return TEXT("<invalid>");
+        const UScriptStruct* SS = SV.GetScriptStruct();
+        if (!SS) return TEXT("<null-type>");
+        FString Txt;
+        SS->ExportText(Txt, SV.GetMemory(), nullptr, nullptr, PPF_None, nullptr);
+        Txt.ReplaceInline(TEXT("\n"), TEXT(" "));
+        return Txt;
+    };
+
+    TFunction<void(const FDaxNodeID, int32, const FString&)> DumpNode;
+    DumpNode = [&](const FDaxNodeID ID, int32 Depth, const FString& Label) {
+        const FString Indent = IndentOf(Depth);
+        if (!Allocator.IsNodeValid(ID)) {
+            Out += FString::Printf(TEXT("%s- %s %s <invalid>\n"), *Indent, Label.Len() ? *Label : TEXT("(root)"),
+                                   *ID.ToString());
+            return;
+        }
+
+        const ArzDax::FDaxNode* Node = Allocator.TryGetNode(ID);
+        const auto Common = Allocator.GetCommonInfo(ID);
+        const UScriptStruct* Type = Common.ValueType;
+        const uint32 Ver = Common.Version;
+
+        FString TypeName = TEXT("Empty");
+        if (Type == FDaxFakeTypeArray::StaticStruct()) TypeName = TEXT("Array");
+        else if (Type == FDaxFakeTypeMap::StaticStruct()) TypeName = TEXT("Map");
+        else if (Type == FDaxFakeTypeEmpty::StaticStruct()) TypeName = TEXT("Empty");
+        else if (Type == nullptr) TypeName = TEXT("NULL");
+        else TypeName = Type->GetName();
+
+        const FString LabelText = Label.Len() ? Label : TEXT("(root)");
+
+        if (!Node) {
+            Out += FString::Printf(TEXT("%s- %s %s\t<no-node>\n"), *Indent, *LabelText, *TypeName);
+            return;
+        }
+
+        if (Type == FDaxFakeTypeArray::StaticStruct()) {
+            const auto* Arr = Node->GetArray();
+            const int32 Count = Arr ? Arr->Num() : 0;
+            Out += FString::Printf(TEXT("%s- %s Array(count=%d)\n"), *Indent, *LabelText, Count);
+            if (Arr) {
+                for (int32 i = 0; i < Count; ++i) {
+                    DumpNode((*Arr)[i], Depth + 1, FString::Printf(TEXT("[%d]"), i));
+                }
+            }
+        }
+        else if (Type == FDaxFakeTypeMap::StaticStruct()) {
+            const auto* Map = Node->GetMap();
+            const int32 Count = Map ? static_cast<int32>(Map->size()) : 0;
+            Out += FString::Printf(TEXT("%s- %s Map(count=%d)\n"), *Indent, *LabelText, Count);
+            if (Map) {
+                for (const auto& KV : *Map) {
+                    const FString K = KV.first.ToString();
+                    DumpNode(KV.second, Depth + 1, K);
+                }
+            }
+        }
+        else if (Type == FDaxFakeTypeEmpty::StaticStruct() || Type == nullptr) {
+            Out += FString::Printf(TEXT("%s- %s Empty\n"), *Indent, *LabelText);
+        }
+        else {
+            const FConstStructView SV = Node->TryGetValueGeneric();
+            FString VTxt = ValueToText(SV);
+            Out += FString::Printf(TEXT("%s- %s %s\t=%s\n"), *Indent, *LabelText, *TypeName, *VTxt);
+        }
+    };
+
+    if (RootID.IsValid()) {
+        DumpNode(RootID, 0, TEXT("Root"));
+    }
+    else {
+        Out += TEXT("<Empty Root>\n");
+    }
+
+    return Out;
+}
+
+FString FDaxSet::GetStringDebug() const {
+    FString Out;
+    // 头部：全局ID、版本与分配器统计
+    Out += FString::Printf(
+        TEXT(
+            "DaxSet(ID=%u) DataVer=%u StructVer=%u \n Allocator { TotalAlloc=%u, TotalFree=%u, Current=%u, Peak=%u, Chunks=%u, FreeRemain=%u }\n"),
+        GlobalSetID,
+        DataVersion,
+        StructVersion,
+        Allocator.GetTotalAllocated(),
+        Allocator.GetTotalDeallocated(),
+        Allocator.GetCurrentActive(),
+        Allocator.GetPeakActive(),
+        Allocator.GetChunkCount(),
+        Allocator.GetFreeRemaining());
+
+    auto IndentOf = [](int32 Depth) {
+        FString S;
+        S.Reserve(Depth * 3);
+        for (int32 i = 0; i < Depth; ++i) S += TEXT("   ");
+        return S;
+    };
+
+    auto ValueToText = [](const FConstStructView& SV) -> FString {
+        if (!SV.IsValid()) return TEXT("<invalid>");
+        const UScriptStruct* SS = SV.GetScriptStruct();
+        if (!SS) return TEXT("<null-type>");
+        FString Txt;
+        SS->ExportText(Txt, SV.GetMemory(), nullptr, nullptr, PPF_None, nullptr);
+        Txt.ReplaceInline(TEXT("\n"), TEXT(" "));
+        return Txt;
+    };
+
+    TFunction<void(const FDaxNodeID, int32, const FString&)> DumpNode;
+    DumpNode = [&](const FDaxNodeID ID, int32 Depth, const FString& Label) {
+        const FString Indent = IndentOf(Depth);
+        if (!Allocator.IsNodeValid(ID)) {
+            Out += FString::Printf(TEXT("%s- %s %s <invalid>\n"), *Indent, Label.Len() ? *Label : TEXT("(root)"),
+                                   *ID.ToString());
+            return;
+        }
+
+        const ArzDax::FDaxNode* Node = Allocator.TryGetNode(ID);
+        const auto Common = Allocator.GetCommonInfo(ID);
+        const UScriptStruct* Type = Common.ValueType;
+        const uint32 Ver = Common.Version;
+
+        FString TypeName = TEXT("Empty");
+        if (Type == FDaxFakeTypeArray::StaticStruct()) TypeName = TEXT("Array");
+        else if (Type == FDaxFakeTypeMap::StaticStruct()) TypeName = TEXT("Map");
+        else if (Type == FDaxFakeTypeEmpty::StaticStruct()) TypeName = TEXT("Empty");
+        else if (Type == nullptr) TypeName = TEXT("NULL");
+        else TypeName = Type->GetName();
+
+        const FString LabelText = Label.Len() ? Label : TEXT("(root)");
+
+        if (!Node) {
+            Out += FString::Printf(
+                TEXT("%s- %s %s\t[ID=%s Ver=%u] <no-node>\n"), *Indent, *LabelText, *TypeName, *ID.ToString(), Ver);
+            return;
+        }
+
+        if (Type == FDaxFakeTypeArray::StaticStruct()) {
+            const auto* Arr = Node->GetArray();
+            const int32 Count = Arr ? Arr->Num() : 0;
+            Out += FString::Printf(
+                TEXT("%s- %s Array(count=%d) [ID=%s Ver=%u]\n"), *Indent, *LabelText, Count, *ID.ToString(), Ver);
+            if (Arr) {
+                for (int32 i = 0; i < Count; ++i) {
+                    DumpNode((*Arr)[i], Depth + 1, FString::Printf(TEXT("[%d]"), i));
+                }
+            }
+        }
+        else if (Type == FDaxFakeTypeMap::StaticStruct()) {
+            const auto* Map = Node->GetMap();
+            const int32 Count = Map ? static_cast<int32>(Map->size()) : 0;
+            Out += FString::Printf(
+                TEXT("%s- %s Map(count=%d) [ID=%s Ver=%u]\n"), *Indent, *LabelText, Count, *ID.ToString(), Ver);
+            if (Map) {
+                for (const auto& KV : *Map) {
+                    const FString K = KV.first.ToString();
+                    DumpNode(KV.second, Depth + 1, K);
+                }
+            }
+        }
+        else if (Type == FDaxFakeTypeEmpty::StaticStruct() || Type == nullptr) {
+            Out += FString::Printf(TEXT("%s- %s Empty [ID=%s Ver=%u]\n"), *Indent, *LabelText, *ID.ToString(), Ver);
+        }
+        else {
+            const FConstStructView SV = Node->TryGetValueGeneric();
+            const FString VTxt = ValueToText(SV);
+            Out += FString::Printf(
+                TEXT("%s- %s %s\t=%s [ID=%s Ver=%u]\n"), *Indent, *LabelText, *TypeName, *VTxt, *ID.ToString(), Ver);
+        }
+    };
+
+    if (RootID.IsValid()) {
+        DumpNode(RootID, 0, TEXT("Root"));
+    }
+    else {
+        Out += TEXT("<Empty Root>\n");
+    }
+
+    return Out;
 }
 
 bool FDaxSet::IsNetRegistered() const {
@@ -460,203 +635,6 @@ uint32 FDaxSet::GetNodeNumRecursive(const FDaxNodeID ID) const {
     int32 Count = 0;
     GetNodeNumRecursiveImp(ID, Count);
     return Count;
-}
-
-FString FDaxSet::GetString() const {
-    FString Out;
-    Out += FString::Printf(TEXT("DaxSet(ID=%u) DataVer=%u StructVer=%u Nodes=%u\n"),
-                           GlobalSetID, DataVersion, StructVersion, Allocator.GetCurrentActive());
-
-    auto IndentOf = [](int32 Depth) {
-        FString S;
-        S.Reserve(Depth * 2);
-        for (int32 i = 0; i < Depth; ++i) S += TEXT("   ");
-        return S;
-    };
-
-    auto ValueToText = [](const FConstStructView& SV) -> FString {
-        if (!SV.IsValid()) return TEXT("<invalid>");
-        const UScriptStruct* SS = SV.GetScriptStruct();
-        if (!SS) return TEXT("<null-type>");
-        FString Txt;
-        SS->ExportText(Txt, SV.GetMemory(), nullptr, nullptr, PPF_None, nullptr);
-        Txt.ReplaceInline(TEXT("\n"), TEXT(" "));
-        return Txt;
-    };
-
-    TFunction<void(const FDaxNodeID, int32, const FString&)> DumpNode;
-    DumpNode = [&](const FDaxNodeID ID, int32 Depth, const FString& Label) {
-        const FString Indent = IndentOf(Depth);
-        if (!Allocator.IsNodeValid(ID)) {
-            Out += FString::Printf(TEXT("%s- %s %s <invalid>\n"), *Indent, Label.Len() ? *Label : TEXT("(root)"),
-                                   *ID.ToString());
-            return;
-        }
-
-        const ArzDax::FDaxNode* Node = Allocator.TryGetNode(ID);
-        const auto Common = Allocator.GetCommonInfo(ID);
-        const UScriptStruct* Type = Common.ValueType;
-        const uint32 Ver = Common.Version;
-
-        FString TypeName = TEXT("Empty");
-        if (Type == FDaxFakeTypeArray::StaticStruct()) TypeName = TEXT("Array");
-        else if (Type == FDaxFakeTypeMap::StaticStruct()) TypeName = TEXT("Map");
-        else if (Type == FDaxFakeTypeEmpty::StaticStruct()) TypeName = TEXT("Empty");
-        else if (Type == nullptr) TypeName = TEXT("NULL");
-        else TypeName = Type->GetName();
-
-        const FString LabelText = Label.Len() ? Label : TEXT("(root)");
-
-        if (!Node) {
-            Out += FString::Printf(TEXT("%s- %s %s\t<no-node>\n"), *Indent, *LabelText, *TypeName);
-            return;
-        }
-
-        if (Type == FDaxFakeTypeArray::StaticStruct()) {
-            const auto* Arr = Node->GetArray();
-            const int32 Count = Arr ? Arr->Num() : 0;
-            Out += FString::Printf(TEXT("%s- %s Array(count=%d)\n"), *Indent, *LabelText, Count);
-            if (Arr) {
-                for (int32 i = 0; i < Count; ++i) {
-                    DumpNode((*Arr)[i], Depth + 1, FString::Printf(TEXT("[%d]"), i));
-                }
-            }
-        }
-        else if (Type == FDaxFakeTypeMap::StaticStruct()) {
-            const auto* Map = Node->GetMap();
-            const int32 Count = Map ? static_cast<int32>(Map->size()) : 0;
-            Out += FString::Printf(TEXT("%s- %s Map(count=%d)\n"), *Indent, *LabelText, Count);
-            if (Map) {
-                for (const auto& KV : *Map) {
-                    const FString K = KV.first.ToString();
-                    DumpNode(KV.second, Depth + 1, K);
-                }
-            }
-        }
-        else if (Type == FDaxFakeTypeEmpty::StaticStruct() || Type == nullptr) {
-            Out += FString::Printf(TEXT("%s- %s Empty\n"), *Indent, *LabelText);
-        }
-        else {
-            const FConstStructView SV = Node->TryGetValueGeneric();
-            FString VTxt = ValueToText(SV);
-            Out += FString::Printf(TEXT("%s- %s %s\t=%s\n"), *Indent, *LabelText, *TypeName, *VTxt);
-        }
-    };
-
-    if (RootID.IsValid()) {
-        DumpNode(RootID, 0, TEXT("Root"));
-    }
-    else {
-        Out += TEXT("<Empty Root>\n");
-    }
-
-    return Out;
-}
-
-FString FDaxSet::GetStringDebug() const {
-    FString Out;
-    // 头部：全局ID、版本与分配器统计
-    Out += FString::Printf(
-        TEXT(
-            "DaxSet(ID=%u) DataVer=%u StructVer=%u \n Allocator { TotalAlloc=%u, TotalFree=%u, Current=%u, Peak=%u, Chunks=%u, FreeRemain=%u }\n"),
-        GlobalSetID,
-        DataVersion,
-        StructVersion,
-        Allocator.GetTotalAllocated(),
-        Allocator.GetTotalDeallocated(),
-        Allocator.GetCurrentActive(),
-        Allocator.GetPeakActive(),
-        Allocator.GetChunkCount(),
-        Allocator.GetFreeRemaining());
-
-    auto IndentOf = [](int32 Depth) {
-        FString S;
-        S.Reserve(Depth * 3);
-        for (int32 i = 0; i < Depth; ++i) S += TEXT("   ");
-        return S;
-    };
-
-    auto ValueToText = [](const FConstStructView& SV) -> FString {
-        if (!SV.IsValid()) return TEXT("<invalid>");
-        const UScriptStruct* SS = SV.GetScriptStruct();
-        if (!SS) return TEXT("<null-type>");
-        FString Txt;
-        SS->ExportText(Txt, SV.GetMemory(), nullptr, nullptr, PPF_None, nullptr);
-        Txt.ReplaceInline(TEXT("\n"), TEXT(" "));
-        return Txt;
-    };
-
-    TFunction<void(const FDaxNodeID, int32, const FString&)> DumpNode;
-    DumpNode = [&](const FDaxNodeID ID, int32 Depth, const FString& Label) {
-        const FString Indent = IndentOf(Depth);
-        if (!Allocator.IsNodeValid(ID)) {
-            Out += FString::Printf(TEXT("%s- %s %s <invalid>\n"), *Indent, Label.Len() ? *Label : TEXT("(root)"),
-                                   *ID.ToString());
-            return;
-        }
-
-        const ArzDax::FDaxNode* Node = Allocator.TryGetNode(ID);
-        const auto Common = Allocator.GetCommonInfo(ID);
-        const UScriptStruct* Type = Common.ValueType;
-        const uint32 Ver = Common.Version;
-
-        FString TypeName = TEXT("Empty");
-        if (Type == FDaxFakeTypeArray::StaticStruct()) TypeName = TEXT("Array");
-        else if (Type == FDaxFakeTypeMap::StaticStruct()) TypeName = TEXT("Map");
-        else if (Type == FDaxFakeTypeEmpty::StaticStruct()) TypeName = TEXT("Empty");
-        else if (Type == nullptr) TypeName = TEXT("NULL");
-        else TypeName = Type->GetName();
-
-        const FString LabelText = Label.Len() ? Label : TEXT("(root)");
-
-        if (!Node) {
-            Out += FString::Printf(
-                TEXT("%s- %s %s\t[ID=%s Ver=%u] <no-node>\n"), *Indent, *LabelText, *TypeName, *ID.ToString(), Ver);
-            return;
-        }
-
-        if (Type == FDaxFakeTypeArray::StaticStruct()) {
-            const auto* Arr = Node->GetArray();
-            const int32 Count = Arr ? Arr->Num() : 0;
-            Out += FString::Printf(
-                TEXT("%s- %s Array(count=%d) [ID=%s Ver=%u]\n"), *Indent, *LabelText, Count, *ID.ToString(), Ver);
-            if (Arr) {
-                for (int32 i = 0; i < Count; ++i) {
-                    DumpNode((*Arr)[i], Depth + 1, FString::Printf(TEXT("[%d]"), i));
-                }
-            }
-        }
-        else if (Type == FDaxFakeTypeMap::StaticStruct()) {
-            const auto* Map = Node->GetMap();
-            const int32 Count = Map ? static_cast<int32>(Map->size()) : 0;
-            Out += FString::Printf(
-                TEXT("%s- %s Map(count=%d) [ID=%s Ver=%u]\n"), *Indent, *LabelText, Count, *ID.ToString(), Ver);
-            if (Map) {
-                for (const auto& KV : *Map) {
-                    const FString K = KV.first.ToString();
-                    DumpNode(KV.second, Depth + 1, K);
-                }
-            }
-        }
-        else if (Type == FDaxFakeTypeEmpty::StaticStruct() || Type == nullptr) {
-            Out += FString::Printf(TEXT("%s- %s Empty [ID=%s Ver=%u]\n"), *Indent, *LabelText, *ID.ToString(), Ver);
-        }
-        else {
-            const FConstStructView SV = Node->TryGetValueGeneric();
-            const FString VTxt = ValueToText(SV);
-            Out += FString::Printf(
-                TEXT("%s- %s %s\t=%s [ID=%s Ver=%u]\n"), *Indent, *LabelText, *TypeName, *VTxt, *ID.ToString(), Ver);
-        }
-    };
-
-    if (RootID.IsValid()) {
-        DumpNode(RootID, 0, TEXT("Root"));
-    }
-    else {
-        Out += TEXT("<Empty Root>\n");
-    }
-
-    return Out;
 }
 
 void FDaxSet::ReleaseSubtreeImp(const FDaxNodeID ID, uint32& ClearNum) {

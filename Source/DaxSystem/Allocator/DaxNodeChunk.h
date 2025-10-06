@@ -1,5 +1,7 @@
 ﻿#pragma once
-#include "DaxNode.h"
+#include "DaxSystem/Node/DaxNode.h"
+#include "DaxSystem/Basic/DaxCommon.h"
+#include "DaxSystem/Basic/DaxNodeID.h"
 
 #define DAX_NODE_POOR_CHUNK_SIZE 32
 #define DAX_NODE_POOR_BASE_NUMBER ((uint32)1)
