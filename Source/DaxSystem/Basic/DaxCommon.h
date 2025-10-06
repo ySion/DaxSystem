@@ -6,14 +6,14 @@
 DECLARE_LOG_CATEGORY_EXTERN(DataXSystem, Log, All);
 
 // ================== 可控调试日志开关（网络增量同步） ==================
-#ifndef DAX_ENABLE_NETSYNC_LOG
-#define DAX_ENABLE_NETSYNC_LOG 0
+#ifndef DAX_ENABLE_NET_SYNC_LOG
+#define DAX_ENABLE_NET_SYNC_LOG 0
 #endif
 
-#if DAX_ENABLE_NETSYNC_LOG
-#define DAX_NETSYNC_LOG(Verbosity, Fmt, ...) UE_LOGFMT(DataXSystem, Verbosity, Fmt, ##__VA_ARGS__)
+#if DAX_ENABLE_NET_SYNC_LOG
+#define DAX_NET_SYNC_LOG(Verbosity, Fmt, ...) UE_LOGFMT(DataXSystem, Verbosity, Fmt, ##__VA_ARGS__)
 #else
-#define DAX_NETSYNC_LOG(Verbosity, Fmt, ...) do { } while (0)
+#define DAX_NET_SYNC_LOG(Verbosity, Fmt, ...) do { } while (0)
 #endif
 
 namespace ArzDax {
@@ -52,12 +52,12 @@ namespace ArzDax {
     enum class EDaxDeltaOp : uint8 { Remove = 0, Add = 1, Update = 2 };
 
     enum : uint8 {
-        DAX_DELTA_OP_SHIFT   = 6,
-        DAX_DELTA_OP_MASK    = 0xC0,
-        DAX_DELTA_FLAG_PARENT= 0x20,
-        DAX_DELTA_FLAG_TYPE  = 0x10,
+        DAX_DELTA_OP_SHIFT = 6,
+        DAX_DELTA_OP_MASK = 0xC0,
+        DAX_DELTA_FLAG_PARENT = 0x20,
+        DAX_DELTA_FLAG_TYPE = 0x10,
         DAX_DELTA_FLAG_VALUE = 0x08,
-        DAX_DELTA_FLAG_CDELTA= 0x04,
+        DAX_DELTA_FLAG_CDELTA = 0x04,
         DAX_DELTA_FLAG_CFULL = 0x02,
     };
 
@@ -76,13 +76,13 @@ namespace ArzDax {
     }
 
     static inline bool DaxFlagHasParent(uint8 Flags) { return (Flags & DAX_DELTA_FLAG_PARENT) != 0; }
-    static inline bool DaxFlagHasType(uint8 Flags)   { return (Flags & DAX_DELTA_FLAG_TYPE) != 0; }
-    static inline bool DaxFlagHasValue(uint8 Flags)  { return (Flags & DAX_DELTA_FLAG_VALUE) != 0; }
+    static inline bool DaxFlagHasType(uint8 Flags) { return (Flags & DAX_DELTA_FLAG_TYPE) != 0; }
+    static inline bool DaxFlagHasValue(uint8 Flags) { return (Flags & DAX_DELTA_FLAG_VALUE) != 0; }
     static inline bool DaxFlagHasCDelta(uint8 Flags) { return (Flags & DAX_DELTA_FLAG_CDELTA) != 0; }
-    static inline bool DaxFlagIsCFull(uint8 Flags)   { return (Flags & DAX_DELTA_FLAG_CFULL) != 0; }
+    static inline bool DaxFlagIsCFull(uint8 Flags) { return (Flags & DAX_DELTA_FLAG_CFULL) != 0; }
 }
 
-// TypeMark
+
 USTRUCT()
 struct FDaxFakeTypeEmpty {
     GENERATED_BODY()
@@ -161,77 +161,24 @@ struct DAXSYSTEM_API FDaxResultDetail {
     FDaxResultDetail& operator=(const FDaxResultDetail&) = default;
     FDaxResultDetail(EDaxResult In) : Result(In) {}
     FDaxResultDetail(EDaxResult In, const FString& Msg) : Result(In), ResultMessage(Msg) {}
-
     FORCEINLINE bool operator==(const EDaxResult& Res) const { return Result == Res; }
 
     operator EDaxResult() const { return Result; }
 
-    FString GetResultString() const {
-        switch (Result) {
-            case EDaxResult::Success: return TEXT("Success");
-
-            case EDaxResult::SuccessChangeValue: return TEXT("SuccessChangeValue");
-            case EDaxResult::SuccessChangeValueAndType: return TEXT("SuccessChangeValueAndType");
-            case EDaxResult::SameValueNotChange: return TEXT("SameValueNotChange");
-            case EDaxResult::ValueTypeMismatch: return TEXT("ValueTypeMismatch");
-            case EDaxResult::InvalidTargetValue: return TEXT("InvalidTargetValue");
-            case EDaxResult::InvalidSourceValue: return TEXT("InvalidSourceValue");
-            case EDaxResult::PermissionDenied: return TEXT("PermissionDenied");
-            
-            case EDaxResult::InvalidVisitor: return TEXT("InvalidVisitor");
-            case EDaxResult::InvalidNode: return TEXT("InvalidNode");
-            case EDaxResult::InvalidRootNode: return TEXT("InvalidRootNode");
-
-            case EDaxResult::PathEmptyResolvedToRoot: return TEXT("PathEmptyResolvedToRoot");
-            case EDaxResult::ResolvePathTooDeep: return TEXT("ResolvePathTooDeep");
-
-            case EDaxResult::SegmentNameButNodeNotMap: return TEXT("SegmentNameButNodeNotMap");
-            case EDaxResult::SegmentIndexButNodeNotArray: return TEXT("SegmentIndexButNodeNotArray");
-
-            case EDaxResult::ResolveMapKeyNotFound: return TEXT("ResolveMapKeyNotFound");
-            case EDaxResult::ResolveArrayIndexNegative: return TEXT("ResolveArrayIndexNegative");
-            case EDaxResult::ResolveArrayIndexOutOfRange: return TEXT("ResolveArrayIndexOutOfRange");
-
-            case EDaxResult::ResolveOperatorFailure: return TEXT("ResolveOperatorFailure");
-            case EDaxResult::UnknownFailure: return TEXT("UnknownFailure");
-
-            case EDaxResult::ResolveInternalNullMap: return TEXT("ResolveInternalNullMap");
-            case EDaxResult::ResolveInternalNullArray: return TEXT("ResolveInternalNullArray");
-
-            case EDaxResult::ResolveAllocateFailed: return TEXT("ResolveAllocateFailed");
-
-            default: return TEXT("Unknown error");
-        }
-    }
+    FString GetResultString() const;
 
     FORCEINLINE bool IsSuccess() const { return Result == EDaxResult::Success; }
-
     FORCEINLINE bool IsOk() const { return Result <= EDaxResult::SameValueNotChange; }
-
     FORCEINLINE void ed() const {
-        if (!IsOk()) UE_LOGFMT(DataXSystem, Error, "Dax Resolve Failed: [{0}] : {1}", GetResultString(), ResultMessage);
+        if (!IsOk())
+            UE_LOGFMT(DataXSystem, Error, "Dax Resolve Failed: [{0}] : {1}", GetResultString(), ResultMessage);
     }
 
     FORCEINLINE void ed(const FString& Context) const {
-        if (!IsOk()) UE_LOGFMT(DataXSystem, Error, "[{0}] Dax Resolve Failed: [{1}] : {2}", Context, GetResultString(), ResultMessage);
+        if (!IsOk())
+            UE_LOGFMT(DataXSystem, Error, "[{0}] Dax Resolve Failed: [{1}] : {2}", Context, GetResultString(), ResultMessage);
     }
-
-    // 详细诊断（包含堆栈追踪）
-    void edv() const {
-        if (!IsOk()) {
-            UE_LOGFMT(DataXSystem, Error, "==== DaxSystem Op Failed: ====");
-            UE_LOGFMT(DataXSystem, Error, "==== Result: [{0}]", *GetResultString());
-            UE_LOGFMT(DataXSystem, Error, "==== Message: {0}", *ResultMessage);
-            UE_LOGFMT(DataXSystem, Error, "==== Stack Trace:");
-            
-            TArray<FProgramCounterSymbolInfo> Stack = FPlatformStackWalk::GetStack(1, 5);
-            for (const auto& Frame : Stack) {
-                UE_LOGFMT(DataXSystem, Error, "==== {0} [{1}:{2}]",
-                          Frame.FunctionName, Frame.Filename, Frame.LineNumber);
-            }
-        }
-    }
-
-    // 详细诊断（包含堆栈追踪） as 特化版
+    
+    void edv() const;
     void edvas(const FString& Context) const;
 };

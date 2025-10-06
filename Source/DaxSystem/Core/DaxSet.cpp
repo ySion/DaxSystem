@@ -812,7 +812,7 @@ void FDaxSet::RebuildOnChangedIndex() {
 
 bool FDaxSet::Sync_ServerFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
     FBitWriter& Writer = *DeltaParms.Writer;
-    DAX_NETSYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerFullSyncImpl"));
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerFullSyncImpl"));
     TSharedPtr<FDaxSetBaseState> NewState = MakeShared<FDaxSetBaseState>();
     *DeltaParms.NewState = NewState;
 
@@ -871,13 +871,13 @@ bool FDaxSet::Sync_ServerFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             Node.SerializeValueData(Writer, DeltaParms.Map, Type);
         }
     });
-    DAX_NETSYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerFullSyncImpl End"));
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerFullSyncImpl End"));
     return true;
 }
 
 bool FDaxSet::Sync_ServerDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms, FDaxSetBaseState* OldState) {
     FBitWriter& Writer = *DeltaParms.Writer;
-    DAX_NETSYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerDeltaSyncImpl"));
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerDeltaSyncImpl"));
 
     Writer.WriteBit(false); // 增量标记
     if (OldState->GlobalSetID <= 1) {
@@ -1235,12 +1235,12 @@ bool FDaxSet::Sync_ServerDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms, FDaxS
     for (const auto& R : Updates) RefreshContainerMirror(R.ID, R.Type);
 
     *DeltaParms.NewState = NewState;
-    DAX_NETSYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerDeltaSyncImpl End"));
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ServerDeltaSyncImpl End"));
     return true;
 }
 
 bool FDaxSet::Sync_ClientFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
-    DAX_NETSYNC_LOG(Warning, TEXT("FDaxSet::Sync_ClientFullSyncImpl"));
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ClientFullSyncImpl"));
     FBitReader& Reader = *DeltaParms.Reader;
 
     // 入口已读取 IsFullSync=true
@@ -1262,7 +1262,7 @@ bool FDaxSet::Sync_ClientFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
         UObject* TempTypeObject = nullptr;
         const bool bTypeMapped = DeltaParms.Map->SerializeObject(Reader, UScriptStruct::StaticClass(), TempTypeObject);
         if (!bTypeMapped) {
-            DAX_NETSYNC_LOG(Warning, "FullSync: Unmapped UScriptStruct at node {0}. Defer reading.", NodeID.ToString());
+            DAX_NET_SYNC_LOG(Warning, "FullSync: Unmapped UScriptStruct at node {0}. Defer reading.", NodeID.ToString());
             DeltaParms.bOutHasMoreUnmapped = true;
             return true;
         }
@@ -1337,14 +1337,14 @@ bool FDaxSet::Sync_ClientFullSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
     if (RootCandidate.IsValid()) RootID = RootCandidate;
     ++StructVersion;
     ++DataVersion;
-    DAX_NETSYNC_LOG(Warning, TEXT("FDaxSet::Sync_ClientFullSyncImpl End"));
-    DAX_NETSYNC_LOG(Warning, "Full ReaderBits pos={0}/{1}", Reader.GetPosBits(), Reader.GetNumBits());
+    DAX_NET_SYNC_LOG(Warning, TEXT("FDaxSet::Sync_ClientFullSyncImpl End"));
+    DAX_NET_SYNC_LOG(Warning, "Full ReaderBits pos={0}/{1}", Reader.GetPosBits(), Reader.GetNumBits());
     return true;
 }
 
 bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
     SCOPE_CYCLE_COUNTER(STAT_NetDeltaSync);
-    DAX_NETSYNC_LOG(Warning, "DaxSet::Sync_ClientDeltaSyncImpl");
+    DAX_NET_SYNC_LOG(Warning, "DaxSet::Sync_ClientDeltaSyncImpl");
     FBitReader& Reader = *DeltaParms.Reader;
     if (const bool IsNeedRegister = Reader.ReadBit() != 0) {
         RegisterDaxSetOnNetWork(Reader);
@@ -1463,7 +1463,7 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
     Reader.SerializeIntPacked(AddsCount);
     Reader.SerializeIntPacked(RemovesCount);
     Reader.SerializeIntPacked(UpdatesCount);
-    DAX_NETSYNC_LOG(Warning, "Delta counts: Adds={0} Removes={1} Updates={2}", AddsCount, RemovesCount, UpdatesCount);
+    DAX_NET_SYNC_LOG(Warning, "Delta counts: Adds={0} Removes={1} Updates={2}", AddsCount, RemovesCount, UpdatesCount);
     if (RemovesCount > 0 || AddsCount > 0) { bLocalStructChanged = true; }
 
     for (uint32 i = 0; i < RemovesCount; ++i) {
@@ -1491,7 +1491,7 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             UObject* TempTypeObject = nullptr;
             const bool bTypeMapped = DeltaParms.Map->SerializeObject(Reader, UScriptStruct::StaticClass(), TempTypeObject);
             if (!bTypeMapped) {
-                DAX_NETSYNC_LOG(Warning, "Delta-Add: Unmapped UScriptStruct for node {0}, flags={1}. Defer.", NodeID.ToString(), FString::Printf(TEXT("0x%X"), Flags));
+                DAX_NET_SYNC_LOG(Warning, "Delta-Add: Unmapped UScriptStruct for node {0}, flags={1}. Defer.", NodeID.ToString(), FString::Printf(TEXT("0x%X"), Flags));
                 DeltaParms.bOutHasMoreUnmapped = true;
                 return true;
             }
@@ -1521,7 +1521,7 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             }
         };
         const FString TypeName = TempType ? TempType->GetName() : TEXT("null");
-        DAX_NETSYNC_LOG(Warning, "Delta-Add[{0}] Node={1} Flags={2} Type={3}", i, NodeID.ToString(), FString::Printf(TEXT("0x%X"), Flags), TypeName);
+        DAX_NET_SYNC_LOG(Warning, "Delta-Add[{0}] Node={1} Flags={2} Type={3}", i, NodeID.ToString(), FString::Printf(TEXT("0x%X"), Flags), TypeName);
 
         if (!TempType || TempType == FDaxFakeTypeEmpty::StaticStruct()) {
             if (Node) {
@@ -1716,7 +1716,7 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
 
         ChangedEvents.Add(FChangedEvent{NodeID, {}});
         const int32 EndBits = Reader.GetPosBits();
-        DAX_NETSYNC_LOG(Warning, "Delta-Add[{0}] bits {1}->{2} (+{3})", i, StartBits, EndBits, EndBits - StartBits);
+        DAX_NET_SYNC_LOG(Warning, "Delta-Add[{0}] bits {1}->{2} (+{3})", i, StartBits, EndBits, EndBits - StartBits);
     }
 
     for (uint32 i = 0; i < UpdatesCount; ++i) {
@@ -1734,7 +1734,7 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             UObject* TempTypeObject = nullptr;
             const bool bTypeMapped = DeltaParms.Map->SerializeObject(Reader, UScriptStruct::StaticClass(), TempTypeObject);
             if (!bTypeMapped) {
-                DAX_NETSYNC_LOG(Warning, "Delta-Update: Unmapped UScriptStruct for node {0}, flags={1}. Defer.", NodeID.ToString(), FString::Printf(TEXT("0x%X"), Flags));
+                DAX_NET_SYNC_LOG(Warning, "Delta-Update: Unmapped UScriptStruct for node {0}, flags={1}. Defer.", NodeID.ToString(), FString::Printf(TEXT("0x%X"), Flags));
                 DeltaParms.bOutHasMoreUnmapped = true;
                 return true;
             }
@@ -1996,7 +1996,7 @@ bool FDaxSet::Sync_ClientDeltaSyncImpl(FNetDeltaSerializeInfo& DeltaParms) {
             }
         }
     }
-    DAX_NETSYNC_LOG(Warning, "DaxSet::Sync_ClientDeltaSyncImpl End");
-    DAX_NETSYNC_LOG(Warning, "Delta ReaderBits pos={0}/{1}", Reader.GetPosBits(), Reader.GetNumBits());
+    DAX_NET_SYNC_LOG(Warning, "DaxSet::Sync_ClientDeltaSyncImpl End");
+    DAX_NET_SYNC_LOG(Warning, "Delta ReaderBits pos={0}/{1}", Reader.GetPosBits(), Reader.GetNumBits());
     return true;
 }

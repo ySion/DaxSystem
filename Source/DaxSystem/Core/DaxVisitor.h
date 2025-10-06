@@ -194,13 +194,9 @@ public:
 
 
     // 层级关系查询
-
     int32 GetIndexInParentArray() const;
-
     FName GetKeyInParentMap() const;
-
     int32 GetIndexUnderAncestorArray(const FDaxVisitor& Ancestor) const;
-
     FName GetKeyUnderAncestorMap(const FDaxVisitor& Ancestor) const;
 
     bool operator==(const FDaxVisitor& Other) const {
@@ -227,13 +223,9 @@ public:
 
 
     FString GetString() const;
-
     FString GetStringDebug() const;
-
     FString GetStringDeep() const;
-
     FString GetStringDebugDeep() const;
-
     FString GetPathString() const;
 
 private:
@@ -263,7 +255,6 @@ private:
 
     mutable FDaxNodeID OldNodeID{};
 };
-
 
 template <>
 struct TStructOpsTypeTraits<FDaxVisitor> : public TStructOpsTypeTraitsBase2<FDaxVisitor> {
