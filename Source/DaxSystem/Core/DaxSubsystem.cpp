@@ -1,4 +1,5 @@
 ﻿#include "DaxSubsystem.h"
+#include "Net/Core/PushModel/PushModel.h"
 
 bool UDaxSubsystem::ShouldCreateSubsystem(UObject* Outer) const {
     if (!IsValid(Outer)) return false;
@@ -31,11 +32,7 @@ void UDaxSubsystem::HandleWorldPreActorTick(UWorld* InWorld, ELevelTick TickType
 }
 
 void UDaxSubsystem::EarlyTick(float DeltaSeconds) {
-
-    ParallelFor(DaxComponentTable.Num(), [&](int32 Index) {
-        auto Ptr = DaxComponentTable[Index];
-        if (!IsValid(Ptr)) return;
-    });
+    // 当前阶段仅做批量 Push 和帧变更集合清理，监听事件尚未实现
     CollectEvent();
     DispatchEvent();
 }
@@ -46,10 +43,25 @@ void UDaxSubsystem::RegisterComponent(UDaxComponent* Component) {
     UE_LOGFMT(DataXSystem, Log, "DaxSubsystem RegisterComponent: {0}, Parent: {1}", *Component->GetName(), Component->GetOwner() ? *Component->GetOwner()->GetName() : TEXT("null"));
 }
 
+void UDaxSubsystem::UnregisterComponent(UDaxComponent* Component) {
+    if (!Component) return;
+    DaxComponentTable.RemoveSwap(Component);
+    UE_LOGFMT(DataXSystem, Log, "DaxSubsystem UnregisterComponent: {0}", Component ? *Component->GetName() : TEXT("null"));
+}
+
 void UDaxSubsystem::CollectEvent() {
-    
+    // 预留：后续在此做多线程筛选/聚合（监听系统未启用）
 }
 
 void UDaxSubsystem::DispatchEvent() {
-    
+    // 批量 Flush PushModel + 清理本帧变更集合
+    DaxComponentTable.RemoveAll([](UDaxComponent* Comp) {
+        if (!IsValid(Comp) || Comp->IsBeingDestroyed()) return true;
+        if (Comp->bPendingDirty) {
+            MARK_PROPERTY_DIRTY_FROM_NAME(UDaxComponent, DataSet, Comp);
+            Comp->bPendingDirty = false;
+        }
+        Comp->DataSet.ClearFrameChangedNodes();
+        return false;
+    });
 }

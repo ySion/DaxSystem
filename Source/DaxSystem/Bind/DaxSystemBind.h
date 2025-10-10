@@ -5,18 +5,6 @@
 #include "DaxSystemBind.generated.h"
 
 UCLASS()
-class UDaxSetBind : public UBlueprintFunctionLibrary {
-    GENERATED_BODY()
-public:
-
-    // 获取访问器
-    UFUNCTION(BlueprintCallable, BlueprintPure, Category = "DaxSystem", meta = (NotInAngelscript))
-    static FDaxVisitor GetVisitor(const FDaxSet& Set) {
-        return const_cast<FDaxSet&>(Set).GetVisitor();
-    }
-};
-
-UCLASS()
 class UDaxVisitorBind : public UBlueprintFunctionLibrary {
     GENERATED_BODY()
 public:

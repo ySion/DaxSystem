@@ -16,6 +16,7 @@ public:
     void EarlyTick(float DeltaSeconds);
 
     void RegisterComponent(UDaxComponent* Component);
+    void UnregisterComponent(UDaxComponent* Component);
     
     UFUNCTION(BlueprintCallable)
     TArray<UDaxComponent*> GetDaxComponentTable() const { return DaxComponentTable; }

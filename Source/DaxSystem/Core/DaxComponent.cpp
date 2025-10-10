@@ -2,17 +2,9 @@
 
 #include "DaxSubsystem.h"
 #include "Net/UnrealNetwork.h"
-#include "Net/Core/PushModel/PushModel.h"
 
 UDaxComponent::UDaxComponent() {
     PrimaryComponentTick.bCanEverTick = false;
-    const auto W = GetWorld();
-    if (!W) return;
-    
-    auto Sys = W->GetSubsystem<UDaxSubsystem>();
-    if (!Sys) return;
-    
-    Sys->RegisterComponent(this);
     SetIsReplicatedByDefault(true);
     DataSet.ParentComponent = this;
 }
@@ -22,6 +14,24 @@ void UDaxComponent::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& 
     FDoRepLifetimeParams SharedParams{};
     SharedParams.bIsPushBased = true;
     DOREPLIFETIME_WITH_PARAMS_FAST(ThisClass, DataSet, SharedParams);
+}
+
+void UDaxComponent::OnRegister() {
+    Super::OnRegister();
+    if (UWorld* W = GetWorld()) {
+        if (UDaxSubsystem* Sys = W->GetSubsystem<UDaxSubsystem>()) {
+            Sys->RegisterComponent(this);
+        }
+    }
+}
+
+void UDaxComponent::OnUnregister() {
+    if (UWorld* W = GetWorld()) {
+        if (UDaxSubsystem* Sys = W->GetSubsystem<UDaxSubsystem>()) {
+            Sys->UnregisterComponent(this);
+        }
+    }
+    Super::OnUnregister();
 }
 
 bool UDaxComponent::BindOnChanged(const FDaxVisitor& Position, const int32 Depth, UObject* Target, const FName& FuncName) {
@@ -40,5 +50,6 @@ void UDaxComponent::UnbindAllFor(UObject* TargetObject) {
 }
 
 void UDaxComponent::MarkDirty() {
-    MARK_PROPERTY_DIRTY_FROM_NAME(ThisClass, DataSet, this);
+    // 改为仅置位，由 Subsystem 统一 Flush，降低 Push 次数
+    bPendingDirty = true;
 }

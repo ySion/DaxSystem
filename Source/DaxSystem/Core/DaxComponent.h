@@ -12,10 +12,18 @@ class DAXSYSTEM_API UDaxComponent : public UActorComponent {
 public:
     UDaxComponent();
     
+    // 为批量 PushModel 提供缓冲：仅置位，由 Subsystem 统一 Flush
+    UPROPERTY(Transient)
+    bool bPendingDirty = false;
+    
     UPROPERTY(Replicated)
     FDaxSet DataSet {};
 
     virtual void GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const override;
+
+    // 调整注册时机：在 OnRegister/OnUnregister 与 Subsystem 交互
+    virtual void OnRegister() override;
+    virtual void OnUnregister() override;
     
     UFUNCTION(BlueprintCallable)
     FDaxVisitor GetVisitor() const { return DataSet.GetVisitor(); }

@@ -56,23 +56,7 @@ AS_FORCE_LINK const FAngelscriptBinds::FBind Bind_FDaxSet(
         FDaxSet_.Method("int32 GetNodeNum() const", &FDaxSet::GetNodeNum);
         FDaxSet_.Method("FString GetString() const", &FDaxSet::GetString);
         FDaxSet_.Method("FString GetStringDebug() const", &FDaxSet::GetStringDebug);
-        FDaxSet_.Method("bool BindOnChanged(const FDaxVisitor& ListenPath, int32 Depth, UObject Target, const FName& FuncName)",
-            [](FDaxSet& Set, const FDaxVisitor& Position, const int32 Depth, UObject* Target, const FName& FuncName) {
-                FDaxOnChangedDynamic Delegate;
-                Delegate.BindUFunction(Target, FuncName);
-                if (!Delegate.IsBound()) return false;
-                return Set.BindOnChanged(Position, Depth, Delegate);
-            });
-
-        FDaxSet_.Method("void UnbindOnChanged(const FDaxVisitor& ListenPath)",
-            [](FDaxSet& Set, const FDaxVisitor& Position) {
-                return Set.UnbindOnChanged(Position);
-            });
-
-        FDaxSet_.Method("void UnbindAllFor(UObject Target)",
-            [](FDaxSet& Set, UObject* Target) {
-                return Set.UnbindAllFor(Target);
-            });
+        // 下线：FDaxSet 的监听相关 API 由 Subsystem 统一管理，不再在 AS 暴露
     }
 });
 

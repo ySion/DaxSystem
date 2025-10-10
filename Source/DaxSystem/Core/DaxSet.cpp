@@ -1320,6 +1320,8 @@ bool FDaxSet::Sync_ClientDeltaRead(FNetDeltaSerializeInfo& DeltaParms) {
     for (uint32 i = 0; i < RemovesCount; ++i) {
         FDaxNodeID NodeID;
         Reader << NodeID;
+        // 记录本帧变更
+        FrameChangedNodes.insert(NodeID);
         if (Allocator.IsNodeValid(NodeID)) {
             CaptureOldIfValue(NodeID);
             ReleaseRecursive(NodeID);
@@ -1559,6 +1561,8 @@ bool FDaxSet::Sync_ClientDeltaRead(FNetDeltaSerializeInfo& DeltaParms) {
             }
         }
 
+        // 记录本帧变更
+        FrameChangedNodes.insert(NodeID);
         const int32 EndBits = Reader.GetPosBits();
         DAX_NET_SYNC_LOG(Warning, "Delta-Add[{0}] bits {1}->{2} (+{3})", i, StartBits, EndBits, EndBits - StartBits);
     }
@@ -1778,6 +1782,8 @@ bool FDaxSet::Sync_ClientDeltaRead(FNetDeltaSerializeInfo& DeltaParms) {
                 bLocalStructChanged = true;
                 bLocalDataChanged = true;
             }
+        // 记录本帧变更
+        FrameChangedNodes.insert(NodeID);
         }
         else {
             // 仅 Meta 更新

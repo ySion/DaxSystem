@@ -104,11 +104,13 @@ private:
     FORCEINLINE void BumpOnlyNodeDataVersion(const FDaxNodeID ID) {
         if (!bRunningOnServer) return;
         Allocator.MarkDirty(ID, true);
+        FrameChangedNodes.insert(ID);
     }
 
     FORCEINLINE void BumpNodeDataVersion(const FDaxNodeID ID) {
         if (!bRunningOnServer) return;
         Allocator.MarkDirty(ID, true);
+        FrameChangedNodes.insert(ID);
         BumpDataVersion();
     }
 
@@ -120,6 +122,7 @@ private:
     FORCEINLINE void BumpNodeDataVersionAndStruct(const FDaxNodeID ID) {
         if (!bRunningOnServer) return;
         Allocator.MarkDirty(ID, true);
+        FrameChangedNodes.insert(ID);
         BumpStructVersion();
     }
 
@@ -203,6 +206,9 @@ public:
     }
 
     FConstStructView TryGetOldValueByNodeID(const FDaxNodeID NodeID) const;
+
+    // 本帧变更节点集合：供 Subsystem 在分发后清理
+    FORCEINLINE void ClearFrameChangedNodes() { FrameChangedNodes.clear(); }
 
 public:
     bool BindOnChanged(const FDaxVisitor& Position, int32 Depth, const FDaxOnChangedDynamic& Delegate);
