@@ -13,6 +13,12 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
+    "Plugins": [
+        {
+            "Name": "Angelscript",
+            "Enabled": true
+        }
+    ],
 	"Modules": [
 		{
 			"Name": "DaxSystem",
