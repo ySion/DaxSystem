@@ -5,7 +5,7 @@
 	"FriendlyName": "DaxSystem",
 	"Description": "",
 	"Category": "Other",
-	"CreatedBy": "ySion",
+	"CreatedBy": "ySion(LZY)",
 	"CreatedByURL": "",
 	"DocsURL": "",
 	"MarketplaceURL": "",
@@ -13,16 +13,21 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
-    "Plugins": [
-        {
-            "Name": "Angelscript",
-            "Enabled": true
-        }
-    ],
+	"Plugins": [
+		{
+			"Name": "Angelscript",
+			"Enabled": true
+		}
+	],
 	"Modules": [
 		{
 			"Name": "DaxSystem",
 			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "DaxSystemEditor",
+			"Type": "Editor",
 			"LoadingPhase": "Default"
 		}
 	]

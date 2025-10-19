@@ -20,6 +20,7 @@ public class DaxSystem : ModuleRules {
         PublicDependencyModuleNames.AddRange(
             new string[] {
                 "Core",
+                "AngelscriptCode",
             }
         );
 
@@ -29,7 +30,6 @@ public class DaxSystem : ModuleRules {
                 "Engine",
                 "Slate",
                 "SlateCore",
-                "AngelscriptCode",
                 "NetCore",
             }
         );
