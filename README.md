@@ -251,17 +251,6 @@ for (int i = 0; i < Items.Num(); i++) {
 }
 ```
 
-### 6.3 绑定变更并做局部刷新
-```angelscript
-DaxComp.BindOnChanged(QuickBar, /*Depth=*/1, this, n"OnQuickBarChanged");
-
-UFUNCTION()
-void OnQuickBarChanged(FDaxVisitor ChangedVisitor) {
-    int idx = ChangedVisitor.GetIndexInParentArray();
-    // 仅重绘 idx 对应 UI 节点
-}
-```
-
 ### 6.4 路径字符串导航（`gPath`）
 ```angelscript
 // `$N` 为数组索引片段标记
